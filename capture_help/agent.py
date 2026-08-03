@@ -14,20 +14,16 @@ from capture_help.utils import get_git_diff
 
 console = Console()
 
-AGENT_SYSTEM_PROMPT = """You are Antigravity, a powerful agentic AI coding assistant powered by DeepSeek.
-You are pair programming with a USER to solve their coding tasks, build software, debug errors, and optimize projects.
+AGENT_SYSTEM_PROMPT = """You are `capture-help`, an expert agentic AI coding assistant powered by DeepSeek API.
+You assist developers with pair programming, codebase search, bug diagnosis, running terminal commands, and writing files.
 
-You have access to the user's workspace and system tools:
-1. READ_FILE: read file content (e.g. `TOOL_READ: path/to/file`)
-2. WRITE_FILE: create or update file content (e.g. `TOOL_WRITE: path/to/file\n```language\ncontent\n````)
-3. RUN_COMMAND: execute terminal commands (e.g. `TOOL_RUN: git status`)
-4. SEARCH_CODE: search project for symbols or text (e.g. `TOOL_SEARCH: query`)
+When the user asks you to run a command, download something, build a project, read a file, or create/edit code, DO NOT tell the user to run it manually. Emit tool calls directly in your response:
+- To run a terminal shell command: TOOL_RUN: <command>
+- To read a file: TOOL_READ: <filepath>
+- To search codebase: TOOL_SEARCH: <query>
+- To write or edit a file: TOOL_WRITE: <filepath>
 
-Guidelines:
-- Keep your responses concise, clear, and action-oriented.
-- Format responses in GitHub-style Markdown with syntax highlighting.
-- When proposing file edits or shell commands, format them clearly.
-- Maintain professional, pair-programming style."""
+Always output production-ready code blocks and concise technical explanations."""
 
 def agent_read_file(filepath: str) -> str:
     path = Path(filepath).expanduser().resolve()
@@ -64,7 +60,7 @@ def agent_run_command(command_str: str) -> str:
 
     if Confirm.ask("[bold yellow]Execute command?[/bold yellow]", default=True):
         try:
-            res = subprocess.run(command_str, shell=True, capture_output=True, text=True, timeout=30)
+            res = subprocess.run(command_str, shell=True, capture_output=True, text=True, timeout=60)
             stdout = res.stdout.strip()
             stderr = res.stderr.strip()
             out = ""
@@ -76,7 +72,7 @@ def agent_run_command(command_str: str) -> str:
                 out = "Command executed cleanly with 0 output."
             return out[:10_000]
         except subprocess.TimeoutExpired:
-            return "Error: Command timed out after 30 seconds."
+            return "Error: Command timed out after 60 seconds."
         except Exception as e:
             return f"Error executing command: {str(e)}"
     return "Command execution cancelled by user."
@@ -121,6 +117,18 @@ def check_and_execute_agent_tools(response_text: str) -> Tuple[bool, str]:
         console.print(f"[bold cyan]🔧 Executing Tool: Search Code '{q}'[/bold cyan]")
         res = agent_search_codebase(q)
         output_log += f"\n[Tool Result SEARCH_CODE '{q}']:\n{res}\n"
+        tool_executed = True
+
+    # 4. TOOL_WRITE: path
+    write_matches = re.findall(r"TOOL_WRITE:\s*([^\n]+)", response_text)
+    for path in write_matches:
+        path = path.strip()
+        console.print(f"[bold cyan]🔧 Executing Tool: Write File '{path}'[/bold cyan]")
+        # Extract code block if present in response
+        code_block = re.search(r"```(?:\w+)?\n(.*?)```", response_text, re.DOTALL)
+        content = code_block.group(1) if code_block else ""
+        res = agent_write_file(path, content)
+        output_log += f"\n[Tool Result WRITE_FILE '{path}']:\n{res}\n"
         tool_executed = True
 
     return tool_executed, output_log
