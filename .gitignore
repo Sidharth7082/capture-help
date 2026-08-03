@@ -24,13 +24,14 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
-# Environments
-.env
-.venv
-env/
+# Virtual Environment
 venv/
 ENV/
-env.bak/
-venv.bak/
+env/
+
+# Local configuration & index caches
+.env
+.capture-help/
+*.sqlite
+*.db
