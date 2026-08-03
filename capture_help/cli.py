@@ -36,6 +36,9 @@ from capture_help.commands.local_cmd import app as local_app
 from capture_help.commands.gpu import gpu_command
 from capture_help.commands.ensemble import ensemble_command
 from capture_help.commands.redact import redact_command
+from capture_help.commands.update_cmd import update_command
+from capture_help.commands.graph import graph_command
+from capture_help.commands.guard import guard_command
 
 app = typer.Typer(
     name=__app_name__,
@@ -319,6 +322,21 @@ def redact(
 ):
     """Scan and redact API keys, passwords, and IP addresses before sending prompts."""
     redact_command(text_or_file)
+
+@app.command("update")
+def update():
+    """Check for new capture-help releases and updates on GitHub."""
+    update_command()
+
+@app.command("graph")
+def graph():
+    """Generate Mermaid.js dependency graph of codebase imports."""
+    graph_command()
+
+@app.command("guard")
+def guard():
+    """Run pre-push continuous security, secret, and unit test audit guard."""
+    guard_command()
 
 if __name__ == "__main__":
     app()

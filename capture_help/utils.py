@@ -32,7 +32,8 @@ def get_console() -> Console:
     return console
 
 def print_header(title: str, subtitle: Optional[str] = None):
-    text = f"[bold cyan]⚡ capture-help[/bold cyan] │ [bold white]{title}[/bold white]"
+    from capture_help import __version__
+    text = f"[bold cyan]⚡ capture-help v{__version__}[/bold cyan] │ [bold white]{title}[/bold white]"
     if subtitle:
         text += f"\n[dim]{subtitle}[/dim]"
     console.print(Panel(text, border_style="cyan", expand=False))

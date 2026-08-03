@@ -1,6 +1,7 @@
 import pytest
 from typer.testing import CliRunner
 
+from capture_help import __version__
 from capture_help.cli import app
 
 runner = CliRunner()
@@ -8,7 +9,7 @@ runner = CliRunner()
 def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "3.0.0" in result.stdout
+    assert __version__ in result.stdout
 
 def test_doctor_command():
     result = runner.invoke(app, ["doctor"])
