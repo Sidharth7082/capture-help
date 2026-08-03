@@ -10,6 +10,7 @@ from capture_help.deepseek import get_provider, DEEPSEEK_MODELS
 from capture_help.history import save_session
 from capture_help.project import fingerprint_project
 from capture_help.utils import print_header, render_project_badge, stream_response, get_git_diff
+from capture_help.cache import get_cached_system_prompt, render_cache_stats
 from capture_help.agent import (
     agent_read_file,
     agent_write_file,
@@ -19,10 +20,6 @@ from capture_help.agent import (
 )
 
 console = Console()
-
-COMPACT_SYSTEM_PROMPT = """You are capture-help, an AI terminal assistant powered by DeepSeek.
-Be concise, direct, and output token-efficient solutions with clean code blocks.
-Commands: /model, /read <file>, /run <cmd>, /search <query>, /diff, /clear, /exit."""
 
 def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[bool, Optional[str]]:
     parts = cmd_text.strip().split(maxsplit=1)
@@ -126,10 +123,12 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
     return False, None
 
 def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, session_id: Optional[str] = None):
-    """Token-optimized interactive chat with sliding context window."""
-    print_header("AI Assistant Chat", "Token-optimized stream. Type /cheap for V4-Flash, /help for commands, /exit to quit.")
+    """Cache-optimized interactive chat with deterministic system prefix."""
+    print_header("AI Assistant Chat", "Cache-optimized stream. Type /cheap for V4-Flash, /help for commands, /exit to quit.")
     
     info = render_project_badge()
+    cached_system_prompt = get_cached_system_prompt(info["name"], info["languages"])
+
     history: List[Dict[str, str]] = initial_messages or []
     sess_id = session_id or str(uuid.uuid4())[:8]
 
@@ -164,12 +163,15 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
 
             history.append({"role": "user", "content": user_input})
             
-            # Sliding Context Window (keep last 6 messages to minimize input token usage)
+            # Sliding Context Window (keep last 6 messages)
             pruned_history = history[-6:]
             
             console.print(f"[dim]Thinking ({settings.deepseek_model})...[/dim]")
-            gen = provider.stream_completion(messages=pruned_history, system_prompt=COMPACT_SYSTEM_PROMPT)
+            gen = provider.stream_completion(messages=pruned_history, system_prompt=cached_system_prompt)
             assistant_reply, stats = stream_response(gen, console)
+
+            if stats:
+                render_cache_stats(stats.cache_hit_tokens, stats.prompt_tokens)
 
             history.append({"role": "assistant", "content": assistant_reply})
             save_session(sess_id, history)
@@ -179,8 +181,10 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
             if executed:
                 history.append({"role": "user", "content": f"Tool Output:\n{tool_out[:2500]}"})
                 pruned_history2 = history[-6:]
-                gen2 = provider.stream_completion(messages=pruned_history2, system_prompt=COMPACT_SYSTEM_PROMPT)
+                gen2 = provider.stream_completion(messages=pruned_history2, system_prompt=cached_system_prompt)
                 reply2, stats2 = stream_response(gen2, console)
+                if stats2:
+                    render_cache_stats(stats2.cache_hit_tokens, stats2.prompt_tokens)
                 history.append({"role": "assistant", "content": reply2})
                 save_session(sess_id, history)
 
