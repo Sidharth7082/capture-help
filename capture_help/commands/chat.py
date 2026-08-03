@@ -8,6 +8,7 @@ try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.styles import Style
     PROMPT_TOOLKIT_AVAILABLE = True
 except ImportError:
     PROMPT_TOOLKIT_AVAILABLE = False
@@ -28,6 +29,22 @@ from capture_help.agent import (
 )
 
 console = Console()
+
+# Premium Dark Mode Theme for prompt_toolkit Autocomplete Popup
+POPUP_STYLE = Style.from_dict({
+    # Popup menu background & text
+    'completion-menu': 'bg:#11111b #cdd6f4',
+    'completion-menu.completion': 'bg:#181825 #89b4fa',
+    'completion-menu.completion.current': 'bg:#89b4fa #11111b bold',
+    
+    # Description metadata column
+    'completion-menu.meta': 'bg:#1e1e2e #a6adc8',
+    'completion-menu.meta.completion': 'bg:#1e1e2e #a6adc8',
+    'completion-menu.meta.completion.current': 'bg:#74c7ec #11111b bold',
+    
+    # Prompt text styling
+    'prompt': '#89b4fa bold',
+})
 
 SLASH_COMMAND_SUGGESTIONS = [
     ("/cheap", "Switch to ultra-cheap DeepSeek V4-Flash model ($0.07 / 1M tokens)"),
@@ -52,8 +69,8 @@ if PROMPT_TOOLKIT_AVAILABLE:
                         yield Completion(
                             cmd,
                             start_position=-len(text),
-                            display=cmd,
-                            display_meta=desc
+                            display=HTML(f"<bold><cyan>{cmd}</cyan></bold>"),
+                            display_meta=HTML(f"<italic>{desc}</italic>")
                         )
 
 def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[bool, Optional[str]]:
@@ -158,7 +175,7 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
     return False, None
 
 def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, session_id: Optional[str] = None):
-    """Interactive AI chat with live prompt_toolkit slash autocompletion popup."""
+    """Interactive AI chat with styled prompt_toolkit slash autocompletion popup."""
     print_header("AI Assistant Chat", "Type / for live autocompletion popup. Type /exit to quit.")
     
     info = render_project_badge()
@@ -171,12 +188,17 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
         console.print(f"[dim]Loaded {len(history)} previous message(s).[/dim]")
 
     if PROMPT_TOOLKIT_AVAILABLE:
-        session = PromptSession(completer=SlashCompleter())
+        try:
+            session = PromptSession(completer=SlashCompleter(), style=POPUP_STYLE)
+        except Exception:
+            session = None
+    else:
+        session = None
 
     while True:
         try:
-            if PROMPT_TOOLKIT_AVAILABLE:
-                user_input = session.prompt("\ncapture-help> ").strip()
+            if session:
+                user_input = session.prompt(HTML("\n<prompt>capture-help&gt; </prompt>")).strip()
             else:
                 user_input = Prompt.ask("\n[bold cyan]capture-help>[/bold cyan] ").strip()
 
