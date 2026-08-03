@@ -37,7 +37,7 @@ class Settings:
 
 settings = Settings()
 
-def save_config(api_key: str, base_url: Optional[str] = None, model: Optional[str] = None) -> Path:
+def save_config(api_key: str, base_url: Optional[str] = None, model: Optional[str] = None, provider: Optional[str] = None) -> Path:
     """Save API configuration to ~/.config/capture-help/.env."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     
@@ -52,7 +52,8 @@ def save_config(api_key: str, base_url: Optional[str] = None, model: Optional[st
     else:
         env_content += f"DEEPSEEK_MODEL={settings.deepseek_model}\n"
         
-    env_content += f"DEFAULT_PROVIDER={settings.default_provider}\n"
+    prov = provider if provider else settings.default_provider
+    env_content += f"DEFAULT_PROVIDER={prov}\n"
 
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         f.write(env_content)
