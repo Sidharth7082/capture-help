@@ -1,37 +1,29 @@
+import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Optional
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 from capture_help.deepseek import get_provider
 from capture_help.utils import (
     print_header,
-    read_file_content,
-    collect_directory_info,
+    read_stdin_or_file,
     stream_response,
+    render_project_badge,
 )
 
 console = Console()
 
-DIRECTORY_REVIEW_PROMPT = """You are a Principal Software Architect performing a code review on a project codebase.
-Project Info:
-- Primary Language: {primary_language}
-- Total Files: {total_files}
-- Total Lines: {total_lines}
-- Sample Files Inspected: {file_names}
+DIFF_REVIEW_PROMPT = """You are a Senior Code Reviewer performing a review on a git diff:
 
-Code Samples:
-{code_samples}
+```diff
+{content}
+```
 
 Instructions:
-1. Provide an executive architectural review.
-2. Highlight:
-   - Potential Bugs & Race Conditions
-   - Code Smells & Dead Code
-   - Memory Management & Performance
-   - Security & Input Sanitization
-3. Conclude with a clear list of prioritized 'Recommendations' (use checkmarks ✓ for actionable items)."""
+1. Provide an executive summary of the changes.
+2. Identify potential bugs, race conditions, or breaking changes.
+3. List recommendations with checkmarks ✓."""
 
 FILE_REVIEW_PROMPT = """You are a Senior Code Reviewer.
 Perform a thorough code review for file '{filename}':
@@ -42,44 +34,53 @@ Perform a thorough code review for file '{filename}':
 
 Instructions:
 1. Evaluate code quality, readability, maintainability, and safety.
-2. Identify:
-   - Potential Bugs & Edge Cases
-   - Security & Memory Vulnerabilities
-   - Performance Bottlenecks
-   - Dead Code / Unused Imports
+2. Identify potential bugs, security issues, and dead code.
 3. Provide prioritized recommendations with checkmarks ✓."""
 
-def review_command(target_path: str):
-    """Perform an automated code review on a file or entire directory."""
-    path = Path(target_path).expanduser().resolve()
-    if not path.exists():
-        console.print(f"[bold red]Error:[/bold red] Path does not exist: [yellow]{target_path}[/yellow]")
+def review_command(target: Optional[str] = None):
+    """Perform an automated code review on a file, directory, or piped git diff."""
+    # Check stdin first
+    if not sys.stdin.isatty():
+        content, _, name = read_stdin_or_file(None)
+        print_header("Automated Diff Review", "Piped stdin git diff")
+        render_project_badge()
+
+        console.print(f"[bold cyan]Reviewing piped git diff ({len(content.splitlines())} lines)...[/bold cyan]\n")
+        provider = get_provider()
+        prompt = DIFF_REVIEW_PROMPT.format(content=content[:15_000])
+        gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
+        stream_response(gen, console)
         return
 
-    print_header("Automated Code Review", f"Reviewing {path.name}")
+    if not target:
+        target = "."
+
+    content, path, name = read_stdin_or_file(target)
+    print_header("Automated Code Review", f"Reviewing {name}")
+    info = render_project_badge()
+
     provider = get_provider()
 
-    if path.is_dir():
-        info = collect_directory_info(path)
+    if path and path.is_dir():
+        from capture_help.utils import collect_directory_info
+        dir_info = collect_directory_info(path)
         
-        # Render beautiful Project Summary Table
         table = Table(title="📦 Project Summary", border_style="cyan", expand=True)
         table.add_column("Metric", style="bold cyan")
         table.add_column("Details", style="bold white")
         
-        table.add_row("Primary Language", info["primary_language"])
-        table.add_row("Total Files Analyzed", str(info["total_files"]))
-        table.add_row("Total Lines of Code", f"{info['total_lines']:,}")
+        table.add_row("Primary Language", dir_info["primary_language"])
+        table.add_row("Total Files Analyzed", str(dir_info["total_files"]))
+        table.add_row("Total Lines of Code", f"{dir_info['total_lines']:,}")
         
-        lang_summary = ", ".join([f"{k} ({v})" for k, v in info["languages"].items()])
-        table.add_row("Language Breakdown", lang_summary or info["primary_language"])
+        lang_summary = ", ".join([f"{k} ({v})" for k, v in dir_info["languages"].items()])
+        table.add_row("Language Breakdown", lang_summary or dir_info["primary_language"])
         
         console.print(table)
         console.print("\n[bold cyan]⚡ Running deep architectural review...[/bold cyan]\n")
 
-        # Prepare code samples from directory
         code_samples = ""
-        sample_files = info["files"][:6]
+        sample_files = dir_info["files"][:6]
         for f in sample_files:
             try:
                 with open(f, "r", encoding="utf-8", errors="ignore") as fo:
@@ -88,31 +89,17 @@ def review_command(target_path: str):
             except Exception:
                 pass
 
-        prompt = DIRECTORY_REVIEW_PROMPT.format(
-            primary_language=info["primary_language"],
-            total_files=info["total_files"],
-            total_lines=info["total_lines"],
-            file_names=", ".join([f.name for f in sample_files]),
-            code_samples=code_samples[:15_000]
+        prompt = (
+            f"Perform an architectural code review for project '{info['name']}'.\n"
+            f"Languages: {', '.join(info['languages'])}\n"
+            f"Build System: {', '.join(info['build_systems'])}\n"
+            f"Code Samples:\n{code_samples[:15_000]}\n"
+            f"Instructions:\n1. Executive architectural review.\n2. Potential bugs & security smells.\n3. Prioritized recommendations with checkmarks ✓."
         )
         gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
         stream_response(gen, console)
-
     else:
-        content, file_path = read_file_content(target_path)
-        lang = file_path.suffix.lstrip(".") or "text"
-
-        table = Table(title="📄 File Summary", border_style="cyan", expand=True)
-        table.add_column("Metric", style="bold cyan")
-        table.add_column("Value", style="bold white")
-        table.add_row("Filename", file_path.name)
-        table.add_row("Language", lang.upper())
-        table.add_row("Line Count", str(len(content.splitlines())))
-        table.add_row("File Size", f"{file_path.stat().st_size / 1024:.2f} KB")
-        
-        console.print(table)
-        console.print("\n[bold cyan]⚡ Reviewing code quality & vulnerabilities...[/bold cyan]\n")
-
-        prompt = FILE_REVIEW_PROMPT.format(filename=file_path.name, language=lang, content=content[:20_000])
+        lang = path.suffix.lstrip(".") if path else "text"
+        prompt = FILE_REVIEW_PROMPT.format(filename=name, language=lang, content=content[:20_000])
         gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
         stream_response(gen, console)

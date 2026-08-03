@@ -1,23 +1,36 @@
 import sys
+import uuid
+from typing import List, Dict, Optional
 from rich.console import Console
-from rich.panel import Panel
 from rich.prompt import Prompt
-from rich.markdown import Markdown
 
 from capture_help.deepseek import get_provider
-from capture_help.utils import print_header, stream_response
+from capture_help.history import save_session
+from capture_help.project import fingerprint_project
+from capture_help.utils import print_header, render_project_badge, stream_response
 
 console = Console()
 
-CHAT_SYSTEM_PROMPT = """You are `capture-help`, an expert AI coding assistant built for the terminal.
-Provide concise, accurate, clean code solutions with brief explanations. Format code blocks cleanly with syntax highlighting labels."""
-
-def chat_command():
-    """Interactive AI chat in the terminal."""
-    print_header("Interactive Chat", "Type /exit or Ctrl+C to quit. Type /clear to reset history.")
+def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, session_id: Optional[str] = None):
+    """Interactive AI chat in the terminal with project context & session persistence."""
+    print_header("Interactive Chat", "Type /exit to quit. Type /clear to reset history.")
     
+    info = render_project_badge()
+    system_prompt = (
+        f"You are `capture-help`, an expert AI coding assistant built for the terminal.\n"
+        f"Working Directory / Project Info:\n"
+        f"- Project Name: {info['name']}\n"
+        f"- Languages: {', '.join(info['languages']) or 'Generic'}\n"
+        f"- Build Systems: {', '.join(info['build_systems']) or 'N/A'}\n"
+        f"Provide concise, accurate solutions with syntax highlighted code blocks."
+    )
+
     provider = get_provider()
-    history = []
+    history: List[Dict[str, str]] = initial_messages or []
+    sess_id = session_id or str(uuid.uuid4())[:8]
+
+    if history:
+        console.print(f"[dim]Loaded {len(history)} previous message(s).[/dim]")
 
     while True:
         try:
@@ -26,7 +39,11 @@ def chat_command():
                 continue
 
             if user_input.lower() in ["/exit", "exit", "quit", ":q"]:
-                console.print("[dim]Goodbye![/dim]")
+                if history:
+                    save_session(sess_id, history)
+                    console.print(f"[dim]Session saved (ID: {sess_id}). Goodbye![/dim]")
+                else:
+                    console.print("[dim]Goodbye![/dim]")
                 break
 
             if user_input.lower() in ["/clear", "clear"]:
@@ -35,17 +52,22 @@ def chat_command():
                 continue
 
             if user_input.lower() in ["/help", "help"]:
-                console.print("[yellow]Commands:[/yellow]\n  /clear - Clear chat history\n  /exit  - Quit chat session\n  /help  - Show this help message")
+                console.print("[yellow]Commands:[/yellow]\n  /clear - Clear chat history\n  /exit  - Quit chat session & save history\n  /help  - Show help message")
                 continue
 
             history.append({"role": "user", "content": user_input})
             
             console.print("[dim]Thinking...[/dim]")
-            gen = provider.stream_completion(messages=history, system_prompt=CHAT_SYSTEM_PROMPT)
-            assistant_reply = stream_response(gen, console)
+            gen = provider.stream_completion(messages=history, system_prompt=system_prompt)
+            assistant_reply, stats = stream_response(gen, console)
 
             history.append({"role": "assistant", "content": assistant_reply})
+            save_session(sess_id, history)
 
         except (KeyboardInterrupt, EOFError):
-            console.print("\n[dim]Session terminated.[/dim]")
+            if history:
+                save_session(sess_id, history)
+                console.print(f"\n[dim]Session saved (ID: {sess_id}). Session terminated.[/dim]")
+            else:
+                console.print("\n[dim]Session terminated.[/dim]")
             sys.exit(0)

@@ -1,8 +1,9 @@
+import sys
+from typing import Optional
 from rich.console import Console
-from rich.panel import Panel
 
 from capture_help.deepseek import get_provider
-from capture_help.utils import print_header, get_git_diff, stream_response
+from capture_help.utils import print_header, get_git_diff, stream_response, render_project_badge
 
 console = Console()
 
@@ -19,14 +20,20 @@ Instructions:
 3. Provide a ready-to-copy `git commit -m "..."` command snippet."""
 
 def commit_command():
-    """Read git diff and generate a Conventional Commit message."""
+    """Read git diff or stdin and generate a Conventional Commit message."""
     print_header("Git Commit Helper", "Analyzing staged / unstaged repository changes")
 
-    diff = get_git_diff()
+    diff = ""
+    if not sys.stdin.isatty():
+        diff = sys.stdin.read(100_000)
+    else:
+        diff = get_git_diff()
+
     if not diff:
         console.print("[bold yellow]No git changes detected![/bold yellow]\nMake sure you are inside a Git repo with staged or unstaged changes (`git diff` or `git status`).")
         return
 
+    render_project_badge()
     console.print(f"[bold cyan]Detected git changes ({len(diff.splitlines())} diff lines). Generating commit message...[/bold cyan]\n")
 
     provider = get_provider()

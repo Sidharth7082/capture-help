@@ -1,9 +1,9 @@
 import typer
 from typing import Optional
-from pathlib import Path
 
 from capture_help import __version__, __app_name__
 from capture_help.commands.chat import chat_command
+from capture_help.commands.ask import ask_command
 from capture_help.commands.explain import explain_command
 from capture_help.commands.fix import fix_command
 from capture_help.commands.review import review_command
@@ -12,6 +12,8 @@ from capture_help.commands.commit import commit_command
 from capture_help.commands.test import test_command
 from capture_help.commands.optimize import optimize_command
 from capture_help.commands.config_cmd import config_command
+from capture_help.commands.alias import alias_command
+from capture_help.commands.history_cmd import history_command, resume_command
 
 app = typer.Typer(
     name=__app_name__,
@@ -41,6 +43,13 @@ def main(
     """
     pass
 
+@app.command("ask")
+def ask(
+    question: str = typer.Argument(..., help="Question about your codebase (e.g. 'Where is GlassEffect initialized?').")
+):
+    """Ask a question about the codebase with automatic project indexing and search."""
+    ask_command(question)
+
 @app.command("chat")
 def chat():
     """Start an interactive AI chat session in the terminal."""
@@ -48,50 +57,69 @@ def chat():
 
 @app.command("explain")
 def explain(
-    filepath: str = typer.Argument(..., help="Path to source file or build log (e.g. build.log).")
+    filepath: Optional[str] = typer.Argument(None, help="Path to source file or build log (or pipe via stdin).")
 ):
     """Explain a source file or compiler/build log in plain English."""
     explain_command(filepath)
 
 @app.command("fix")
 def fix(
-    filepath: str = typer.Argument(..., help="Path to source file to diagnose and fix.")
+    filepath: Optional[str] = typer.Argument(None, help="Path to source file (or pipe via stdin).")
 ):
-    """Analyze a source file and suggest fixes for bugs and smells."""
+    """Analyze code and suggest fixes with interactive diff patching."""
     fix_command(filepath)
 
 @app.command("review")
 def review(
-    target: str = typer.Argument(..., help="Path to file or directory for code review.")
+    target: Optional[str] = typer.Argument(None, help="Path to file/directory or pipe git diff via stdin.")
 ):
-    """Perform an automated code review on a file or directory with project summary metrics."""
+    """Perform an automated code review on a file, directory, or piped git diff."""
     review_command(target)
 
 @app.command("docs")
 def docs(
-    filepath: str = typer.Argument(..., help="Path to source file to generate documentation for.")
+    filepath: Optional[str] = typer.Argument(None, help="Path to source file (or pipe via stdin).")
 ):
-    """Generate technical documentation and docstrings for a source file."""
+    """Generate technical documentation and docstrings."""
     docs_command(filepath)
 
 @app.command("commit")
 def commit():
-    """Read git diff and generate a Conventional Commit message."""
+    """Read git diff or stdin and generate a Conventional Commit message."""
     commit_command()
 
 @app.command("test")
 def test(
-    filepath: str = typer.Argument(..., help="Path to source file to generate unit tests for.")
+    filepath: Optional[str] = typer.Argument(None, help="Path to source file (or pipe via stdin).")
 ):
     """Generate unit tests for a source file."""
     test_command(filepath)
 
 @app.command("optimize")
 def optimize(
-    filepath: str = typer.Argument(..., help="Path to source file to analyze for performance & memory gains.")
+    filepath: Optional[str] = typer.Argument(None, help="Path to source file (or pipe via stdin).")
 ):
     """Suggest performance & memory optimizations with Big-O complexity analysis."""
     optimize_command(filepath)
+
+@app.command("alias")
+def alias(
+    install: bool = typer.Option(False, "--install", "-i", help="Automatically install aliases into ~/.bashrc and ~/.zshrc.")
+):
+    """Generate or install shell aliases (ai, aifix, aireview, aidoc, aicommit, aiask)."""
+    alias_command(install=install)
+
+@app.command("history")
+def history():
+    """List recent saved terminal chat sessions."""
+    history_command()
+
+@app.command("resume")
+def resume(
+    session_id: str = typer.Argument(..., help="Session ID or history index number to resume.")
+):
+    """Resume a previous chat session by ID or index number."""
+    resume_command(session_id)
 
 @app.command("config")
 def config(

@@ -1,8 +1,8 @@
-from pathlib import Path
+from typing import Optional
 from rich.console import Console
 
 from capture_help.deepseek import get_provider
-from capture_help.utils import print_header, read_file_content, stream_response
+from capture_help.utils import print_header, read_stdin_or_file, stream_response, render_project_badge
 
 console = Console()
 
@@ -20,15 +20,16 @@ Instructions:
 
 Format with Markdown headings: '## ⚡ Complexity & Bottleneck Analysis', '## 🚀 Optimized Implementation', '## 📊 Expected Performance Gains'."""
 
-def optimize_command(filepath: str):
-    """Analyze a file and suggest performance & memory optimizations."""
-    content, path = read_file_content(filepath)
-    print_header("Performance Optimizer", f"Optimizing {path.name}")
+def optimize_command(target: Optional[str] = None):
+    """Analyze a file or piped stdin and suggest performance & memory optimizations."""
+    content, path, name = read_stdin_or_file(target)
+    print_header("Performance Optimizer", f"Optimizing {name}")
+    render_project_badge()
 
-    lang = path.suffix.lstrip(".") or "text"
-    console.print(f"[bold cyan]Analyzing performance of:[bold white] {path.name}[/bold white]\n")
+    lang = path.suffix.lstrip(".") if path else "text"
+    console.print(f"[bold cyan]Analyzing performance of:[bold white] {name}[/bold white]\n")
 
     provider = get_provider()
-    prompt = OPTIMIZE_PROMPT.format(filename=path.name, language=lang, content=content[:20_000])
+    prompt = OPTIMIZE_PROMPT.format(filename=name, language=lang, content=content[:20_000])
     gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
     stream_response(gen, console)
