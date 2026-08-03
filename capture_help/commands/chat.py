@@ -26,6 +26,7 @@ from capture_help.agent import (
     agent_run_command,
     agent_search_codebase,
     check_and_execute_agent_tools,
+    clean_dsml_response,
 )
 
 console = Console()
@@ -237,11 +238,13 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
             if stats:
                 render_cache_stats(stats.cache_hit_tokens, stats.prompt_tokens)
 
-            history.append({"role": "assistant", "content": assistant_reply})
+            # Tool execution check & DSML cleanup
+            executed, tool_out = check_and_execute_agent_tools(assistant_reply)
+            clean_reply = clean_dsml_response(assistant_reply)
+
+            history.append({"role": "assistant", "content": clean_reply or assistant_reply})
             save_session(sess_id, history)
 
-            # Tool execution check
-            executed, tool_out = check_and_execute_agent_tools(assistant_reply)
             if executed:
                 history.append({"role": "user", "content": f"Tool Output:\n{tool_out[:2500]}"})
                 pruned_history2 = history[-6:]
@@ -249,7 +252,7 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
                 reply2, stats2 = stream_response(gen2, console)
                 if stats2:
                     render_cache_stats(stats2.cache_hit_tokens, stats2.prompt_tokens)
-                history.append({"role": "assistant", "content": reply2})
+                history.append({"role": "assistant", "content": clean_dsml_response(reply2)})
                 save_session(sess_id, history)
 
         except (KeyboardInterrupt, EOFError):
