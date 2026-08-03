@@ -1,7 +1,7 @@
 import sys
 import re
 import uuid
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from rich.console import Console
 from rich.prompt import Prompt
 from rich.panel import Panel
@@ -13,10 +13,12 @@ from capture_help.history import save_session
 from capture_help.project import fingerprint_project
 from capture_help.utils import print_header, render_project_badge, stream_response, get_git_diff
 from capture_help.agent import (
+    AGENT_SYSTEM_PROMPT,
     agent_read_file,
     agent_write_file,
     agent_run_command,
     agent_search_codebase,
+    check_and_execute_agent_tools,
 )
 
 console = Console()
@@ -24,7 +26,7 @@ console = Console()
 AVAILABLE_MODELS = ["deepseek-chat", "deepseek-reasoner"]
 
 def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[bool, Optional[str]]:
-    """Process slash commands typed in interactive chat. Returns (handled: bool, optional_system_msg)."""
+    """Process slash commands typed in interactive chat."""
     parts = cmd_text.strip().split(maxsplit=1)
     sub = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ""
@@ -47,6 +49,15 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
             )
             console.print(f"[bold green]✓ Switched model to:[bold white] {arg}[/bold white]")
         return True, None
+
+    if sub in ["/plan", "/goal"]:
+        prompt_goal = arg or "Plan step-by-step implementation for the project"
+        console.print(f"[bold cyan]🎯 Planning Goal:[/bold cyan] [bold white]{prompt_goal}[/bold white]")
+        history.append({
+            "role": "user",
+            "content": f"Create a step-by-step implementation plan for: {prompt_goal}. Outline key tasks, file edits, and verification steps."
+        })
+        return False, "Goal added to context."
 
     if sub == "/read":
         if not arg:
@@ -85,13 +96,14 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
         return True, "Git diff added to context."
 
     if sub in ["/help", "help"]:
-        table = Table(title="⚡ In-Chat Slash Commands & Tools", border_style="cyan")
+        table = Table(title="⚡ Antigravity Agent Slash Commands & Tools", border_style="cyan")
         table.add_column("Command", style="bold yellow")
         table.add_column("Description", style="white")
         table.add_row("/model [name]", "View or switch AI model (deepseek-chat, deepseek-reasoner)")
-        table.add_row("/read <file>", "Read source file into AI chat context")
-        table.add_row("/run <command>", "Run shell command and feed output to AI")
-        table.add_row("/search <query>", "Search project codebase for keywords")
+        table.add_row("/plan [goal]", "Create step-by-step implementation plan for a task")
+        table.add_row("/read <file>", "Read source file directly into AI chat context")
+        table.add_row("/run <cmd>", "Execute shell command and attach output to AI context")
+        table.add_row("/search <query>", "Search project codebase for keywords & symbols")
         table.add_row("/diff", "Attach current git diff to chat context")
         table.add_row("/clear", "Reset conversation history")
         table.add_row("/exit", "Save session and exit chat")
@@ -101,18 +113,16 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
     return False, None
 
 def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, session_id: Optional[str] = None):
-    """Interactive AI Agent chat in the terminal with tools & slash commands."""
-    print_header("Interactive Agentic Chat", "Type /help for commands. Type /exit to quit.")
+    """Interactive Antigravity Agent chat in the terminal with tool execution loop."""
+    print_header("Antigravity AI Agent Chat", "Powered by DeepSeek. Type /help for commands. Type /exit to quit.")
     
     info = render_project_badge()
     system_prompt = (
-        f"You are `capture-help`, an expert AI coding agent built for the terminal with full project awareness.\n"
-        f"Project Context:\n"
+        f"{AGENT_SYSTEM_PROMPT}\n\n"
+        f"Active Workspace Context:\n"
         f"- Project Name: {info['name']}\n"
         f"- Languages: {', '.join(info['languages']) or 'Generic'}\n"
         f"- Build Systems: {', '.join(info['build_systems']) or 'N/A'}\n"
-        f"You can answer coding questions, explain architecture, write code, and suggest fixes.\n"
-        f"Available Slash Commands: /model, /read <file>, /run <cmd>, /search <query>, /diff, /clear, /exit."
     )
 
     history: List[Dict[str, str]] = initial_messages or []
@@ -141,7 +151,7 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
                 console.print("[green]✓ Chat history cleared.[/green]")
                 continue
 
-            # Process In-Chat Slash Commands (/model, /read, /run, /search, /diff, /help)
+            # Process In-Chat Slash Commands (/model, /plan, /read, /run, /search, /diff, /help)
             if user_input.startswith("/"):
                 handled, sys_msg = handle_slash_command(user_input, history)
                 if handled:
@@ -150,12 +160,23 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
 
             history.append({"role": "user", "content": user_input})
             
-            console.print(f"[dim]Thinking ({settings.deepseek_model})...[/dim]")
+            # Agent Generation Loop (with Tool Execution support)
+            console.print(f"[dim]Antigravity Thinking ({settings.deepseek_model})...[/dim]")
             gen = provider.stream_completion(messages=history, system_prompt=system_prompt)
             assistant_reply, stats = stream_response(gen, console)
 
             history.append({"role": "assistant", "content": assistant_reply})
             save_session(sess_id, history)
+
+            # Check if LLM output requested automatic tool execution
+            executed, tool_out = check_and_execute_agent_tools(assistant_reply)
+            if executed:
+                history.append({"role": "user", "content": f"Tool Execution Output:\n{tool_out}"})
+                console.print(f"[dim]Processing tool results ({settings.deepseek_model})...[/dim]")
+                gen2 = provider.stream_completion(messages=history, system_prompt=system_prompt)
+                reply2, stats2 = stream_response(gen2, console)
+                history.append({"role": "assistant", "content": reply2})
+                save_session(sess_id, history)
 
         except (KeyboardInterrupt, EOFError):
             if history:
