@@ -179,3 +179,9 @@ class DeepSeekProvider(BaseLLMProvider):
 
 def get_provider(model: Optional[str] = None) -> BaseLLMProvider:
     return DeepSeekProvider(model=model)
+
+def ask_deepseek(prompt: str, system_prompt: Optional[str] = None, model: Optional[str] = None) -> str:
+    provider = get_provider(model=model)
+    response, _ = provider.completion([{"role": "user", "content": prompt}], system_prompt=system_prompt)
+    return response
+

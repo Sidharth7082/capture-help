@@ -32,6 +32,10 @@ from capture_help.commands.benchmark import benchmark_command
 from capture_help.commands.refactor import refactor_command
 from capture_help.commands.secrets import secrets_command
 from capture_help.commands.translate import translate_command
+from capture_help.commands.local_cmd import app as local_app
+from capture_help.commands.gpu import gpu_command
+from capture_help.commands.ensemble import ensemble_command
+from capture_help.commands.redact import redact_command
 
 app = typer.Typer(
     name=__app_name__,
@@ -294,6 +298,27 @@ def config(
 ):
     """Configure or view DeepSeek / Ollama API credentials and settings."""
     config_command(key=key, base_url=base_url, model=model_name)
+
+app.add_typer(local_app, name="local", help="Manage local Ollama models and local AI engine.")
+
+@app.command("gpu")
+def gpu():
+    """Display GPU/VRAM hardware allocation and local inference health."""
+    gpu_command()
+
+@app.command("ensemble")
+def ensemble(
+    prompt: str = typer.Argument(..., help="Prompt to query across cloud DeepSeek & local Gemma 3.")
+):
+    """Run prompt in parallel across Cloud DeepSeek and Local Gemma 3 12B."""
+    ensemble_command(prompt)
+
+@app.command("redact")
+def redact(
+    text_or_file: str = typer.Argument(..., help="Text prompt or file path to redact secrets from.")
+):
+    """Scan and redact API keys, passwords, and IP addresses before sending prompts."""
+    redact_command(text_or_file)
 
 if __name__ == "__main__":
     app()
