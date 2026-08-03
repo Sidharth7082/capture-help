@@ -14,16 +14,19 @@ from capture_help.utils import get_git_diff
 
 console = Console()
 
-AGENT_SYSTEM_PROMPT = """You are `capture-help`, an expert agentic AI coding assistant powered by DeepSeek API.
-You assist developers with pair programming, codebase search, bug diagnosis, running terminal commands, and writing files.
+AGENT_SYSTEM_PROMPT = """You are `capture-help`, an autonomous agentic AI coding & Linux terminal assistant powered by DeepSeek API.
 
-When the user asks you to run a command, download something, build a project, read a file, or create/edit code, DO NOT tell the user to run it manually. Emit tool calls directly in your response:
-- To run a terminal shell command: TOOL_RUN: <command>
-- To read a file: TOOL_READ: <filepath>
-- To search codebase: TOOL_SEARCH: <query>
-- To write or edit a file: TOOL_WRITE: <filepath>
+CRITICAL MANDATE:
+You are equipped with direct terminal execution capabilities. When the user asks ANY question or request that involves checking system info, running commands, downloading packages, building code, or reading/writing files (such as "check my battery", "download fastfetch", "git status", "check disk space", "run tests"):
+1. DO NOT give instructions or tell the user to run commands manually.
+2. DO NOT ask "Let me know if you want me to run it for you".
+3. YOU MUST IMMEDIATELY EMIT `TOOL_RUN: <command>` ON ITS OWN LINE to execute the command directly!
 
-Always output production-ready code blocks and concise technical explanations."""
+Available Tool Commands:
+- TOOL_RUN: <command to execute in bash>
+- TOOL_READ: <filepath to read>
+- TOOL_WRITE: <filepath to write>
+- TOOL_SEARCH: <query to search codebase>"""
 
 def agent_read_file(filepath: str) -> str:
     path = Path(filepath).expanduser().resolve()
@@ -93,38 +96,37 @@ def check_and_execute_agent_tools(response_text: str) -> Tuple[bool, str]:
     output_log = ""
 
     # 1. TOOL_READ: path
-    read_matches = re.findall(r"TOOL_READ:\s*([^\n]+)", response_text)
+    read_matches = re.findall(r"TOOL_READ:\s*([^\n]+)", response_text, re.IGNORECASE)
     for path in read_matches:
-        path = path.strip()
+        path = path.strip(" `\"'")
         console.print(f"[bold cyan]🔧 Executing Tool: Read File '{path}'[/bold cyan]")
         res = agent_read_file(path)
         output_log += f"\n[Tool Result READ_FILE '{path}']:\n{res}\n"
         tool_executed = True
 
     # 2. TOOL_RUN: command
-    run_matches = re.findall(r"TOOL_RUN:\s*([^\n]+)", response_text)
+    run_matches = re.findall(r"TOOL_RUN:\s*([^\n]+)", response_text, re.IGNORECASE)
     for cmd in run_matches:
-        cmd = cmd.strip()
+        cmd = cmd.strip(" `")
         console.print(f"[bold cyan]🔧 Executing Tool: Run Command '{cmd}'[/bold cyan]")
         res = agent_run_command(cmd)
         output_log += f"\n[Tool Result RUN_COMMAND '{cmd}']:\n{res}\n"
         tool_executed = True
 
     # 3. TOOL_SEARCH: query
-    search_matches = re.findall(r"TOOL_SEARCH:\s*([^\n]+)", response_text)
+    search_matches = re.findall(r"TOOL_SEARCH:\s*([^\n]+)", response_text, re.IGNORECASE)
     for q in search_matches:
-        q = q.strip()
+        q = q.strip(" `\"'")
         console.print(f"[bold cyan]🔧 Executing Tool: Search Code '{q}'[/bold cyan]")
         res = agent_search_codebase(q)
         output_log += f"\n[Tool Result SEARCH_CODE '{q}']:\n{res}\n"
         tool_executed = True
 
     # 4. TOOL_WRITE: path
-    write_matches = re.findall(r"TOOL_WRITE:\s*([^\n]+)", response_text)
+    write_matches = re.findall(r"TOOL_WRITE:\s*([^\n]+)", response_text, re.IGNORECASE)
     for path in write_matches:
-        path = path.strip()
+        path = path.strip(" `\"'")
         console.print(f"[bold cyan]🔧 Executing Tool: Write File '{path}'[/bold cyan]")
-        # Extract code block if present in response
         code_block = re.search(r"```(?:\w+)?\n(.*?)```", response_text, re.DOTALL)
         content = code_block.group(1) if code_block else ""
         res = agent_write_file(path, content)
