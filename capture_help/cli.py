@@ -19,10 +19,13 @@ from capture_help.commands.hook import hook_command
 from capture_help.commands.index_cmd import index_command
 from capture_help.commands.plugin_cmd import plugin_command
 from capture_help.commands.tui import tui_command
+from capture_help.commands.stats import stats_command
+from capture_help.commands.web import web_command
+from capture_help.commands.team import team_command
 
 app = typer.Typer(
     name=__app_name__,
-    help="⚡ capture-help v2.0.0: A fast, modern terminal AI assistant powered by DeepSeek API.",
+    help="⚡ capture-help v2.2.0: A fast, modern terminal AI assistant powered by DeepSeek API.",
     add_completion=False,
     rich_markup_mode="rich",
 )
@@ -45,10 +48,29 @@ def main(
     )
 ):
     """
-    ⚡ capture-help v2.0.0 CLI: AI-powered developer assistant in your Linux terminal.
+    ⚡ capture-help v2.2.0 CLI: AI-powered developer assistant in your Linux terminal.
     """
     if ctx.invoked_subcommand is None:
         chat_command()
+
+@app.command("stats")
+def stats():
+    """Display token usage analytics, cost breakdowns, and Context Caching savings."""
+    stats_command()
+
+@app.command("web")
+def web(
+    query: str = typer.Argument(..., help="Documentation or web search query.")
+):
+    """Search live web documentation and frameworks."""
+    web_command(query)
+
+@app.command("team")
+def team(
+    goal: str = typer.Argument(..., help="Goal or project task for the multi-agent team.")
+):
+    """Launch multi-agent teamwork workflow with Architect, Coder, Tester, and Security Auditor."""
+    team_command(goal)
 
 @app.command("tui")
 def tui():

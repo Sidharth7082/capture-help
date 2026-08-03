@@ -8,12 +8,17 @@ runner = CliRunner()
 def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "2.1.0" in result.stdout
+    assert "2.2.0" in result.stdout
 
 def test_doctor_command():
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
     assert "System Doctor & Diagnostics" in result.stdout
+
+def test_stats_command():
+    result = runner.invoke(app, ["stats"])
+    assert result.exit_code == 0
+    assert "Token Analytics & Cost Savings" in result.stdout
 
 def test_models_command():
     result = runner.invoke(app, ["models"])
