@@ -6,7 +6,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from capture_help.config import settings, save_config
-from capture_help.deepseek import get_provider
+from capture_help.deepseek import get_provider, DEEPSEEK_MODELS
 from capture_help.history import save_session
 from capture_help.project import fingerprint_project
 from capture_help.utils import print_header, render_project_badge, stream_response, get_git_diff
@@ -20,8 +20,6 @@ from capture_help.agent import (
 
 console = Console()
 
-AVAILABLE_MODELS = ["deepseek-chat", "deepseek-v4-flash", "deepseek-reasoner"]
-
 COMPACT_SYSTEM_PROMPT = """You are capture-help, an AI terminal assistant powered by DeepSeek.
 Be concise, direct, and output token-efficient solutions with clean code blocks.
 Commands: /model, /read <file>, /run <cmd>, /search <query>, /diff, /clear, /exit."""
@@ -33,21 +31,36 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
 
     if sub == "/model":
         if not arg:
-            table = Table(title="🤖 Active AI Model", border_style="cyan")
-            table.add_column("Model Name", style="bold yellow")
+            table = Table(title="🤖 Official DeepSeek Models", border_style="cyan")
+            table.add_column("Model Key", style="bold yellow")
+            table.add_column("Model Name", style="bold white")
             table.add_column("Status", style="bold green")
-            for m in AVAILABLE_MODELS:
-                status = "[bold green]✓ Active[/bold green]" if m == settings.deepseek_model else ""
-                table.add_row(m, status)
+            table.add_column("Input Cost (per 1M)", style="green")
+            for key, data in DEEPSEEK_MODELS.items():
+                status = "[bold green]✓ Active[/bold green]" if key == settings.deepseek_model else ""
+                table.add_row(key, data["name"], status, f"${data['input_cost_per_m']:.2f}")
             console.print(table)
-            console.print("[dim]To switch: [bold white]/model deepseek-v4-flash[/bold white] or [bold white]/model deepseek-chat[/bold white][/dim]")
+            console.print("[dim]To switch model: [bold white]/model deepseek-v4-flash[/bold white] or [bold white]/model deepseek-chat[/bold white][/dim]")
         else:
-            save_config(
-                api_key=settings.deepseek_api_key,
-                base_url=settings.deepseek_base_url,
-                model=arg,
-            )
-            console.print(f"[bold green]✓ Switched model to:[bold white] {arg}[/bold white]")
+            p_key = arg.lower().strip()
+            if p_key in DEEPSEEK_MODELS:
+                save_config(
+                    api_key=settings.deepseek_api_key,
+                    base_url=settings.deepseek_base_url,
+                    model=p_key,
+                )
+                console.print(f"[bold green]✓ Switched active model to:[bold white] {DEEPSEEK_MODELS[p_key]['name']} ({p_key})[/bold white]")
+            else:
+                console.print(f"[bold red]Unknown model '{arg}'.[/bold red] Run `/model` to see available models.")
+        return True, None
+
+    if sub == "/cheap":
+        save_config(
+            api_key=settings.deepseek_api_key,
+            base_url=settings.deepseek_base_url,
+            model="deepseek-v4-flash",
+        )
+        console.print("[bold green]⚡ Ultra-Cheap Mode Activated![/bold green] Active model: [bold white]deepseek-v4-flash[/bold white] ($0.07 / 1M tokens)")
         return True, None
 
     if sub in ["/plan", "/goal"]:
@@ -99,7 +112,8 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
         table = Table(title="⚡ Slash Commands", border_style="cyan")
         table.add_column("Command", style="bold yellow")
         table.add_column("Description", style="white")
-        table.add_row("/model [name]", "Switch model (deepseek-chat, deepseek-v4-flash, deepseek-reasoner)")
+        table.add_row("/cheap", "Enable ultra-cheap DeepSeek V4-Flash model ($0.07 / 1M tokens)")
+        table.add_row("/model [name]", "Switch model (deepseek-v4-flash, deepseek-chat, deepseek-coder, deepseek-reasoner)")
         table.add_row("/read <file>", "Read file into chat context")
         table.add_row("/run <cmd>", "Run shell command and attach output")
         table.add_row("/search <query>", "Search project codebase")
@@ -113,7 +127,7 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
 
 def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, session_id: Optional[str] = None):
     """Token-optimized interactive chat with sliding context window."""
-    print_header("AI Assistant Chat", "Token-optimized stream. Type /help for commands, /exit to quit.")
+    print_header("AI Assistant Chat", "Token-optimized stream. Type /cheap for V4-Flash, /help for commands, /exit to quit.")
     
     info = render_project_badge()
     history: List[Dict[str, str]] = initial_messages or []

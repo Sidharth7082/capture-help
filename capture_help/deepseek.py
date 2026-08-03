@@ -1,8 +1,9 @@
+import os
 import sys
 import time
-from dataclasses import dataclass
 from typing import Generator, List, Dict, Optional, Tuple
-from openai import OpenAI, APIError, AuthenticationError, APIConnectionError
+from dataclasses import dataclass
+from openai import OpenAI, APIError, APIConnectionError
 from rich.console import Console
 
 from capture_help.config import settings
@@ -18,9 +19,41 @@ class TokenUsageStats:
     total_tokens: int
     cost_usd: float
     model: str
+    cache_hit_tokens: int = 0
+
+DEEPSEEK_MODELS = {
+    "deepseek-v4-flash": {
+        "name": "DeepSeek V4-Flash",
+        "description": "Ultra-fast, lowest cost beta model ($0.07 / 1M input tokens)",
+        "input_cost_per_m": 0.07,
+        "output_cost_per_m": 0.14,
+        "cache_cost_per_m": 0.014,
+    },
+    "deepseek-chat": {
+        "name": "DeepSeek Chat (V3)",
+        "description": "Standard balanced code & conversation model ($0.14 / 1M input tokens)",
+        "input_cost_per_m": 0.14,
+        "output_cost_per_m": 0.28,
+        "cache_cost_per_m": 0.014,
+    },
+    "deepseek-coder": {
+        "name": "DeepSeek Coder",
+        "description": "Specialized code generation & refactoring model ($0.14 / 1M input tokens)",
+        "input_cost_per_m": 0.14,
+        "output_cost_per_m": 0.28,
+        "cache_cost_per_m": 0.014,
+    },
+    "deepseek-reasoner": {
+        "name": "DeepSeek Reasoner (R1)",
+        "description": "DeepSeek-R1 reasoning model for complex architectural problems",
+        "input_cost_per_m": 0.55,
+        "output_cost_per_m": 2.19,
+        "cache_cost_per_m": 0.14,
+    },
+}
 
 class DeepSeekProvider(BaseLLMProvider):
-    """DeepSeek API Provider utilizing OpenAI python SDK with usage tracking."""
+    """Official DeepSeek API Provider implementation."""
 
     def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or settings.deepseek_api_key
@@ -28,10 +61,8 @@ class DeepSeekProvider(BaseLLMProvider):
         self.model = model or settings.deepseek_model
 
         if not self.api_key:
-            console.print(
-                "[bold red]Error:[/bold red] DeepSeek API Key not found!\n"
-                "[yellow]Please run 'capture-help config' or set DEEPSEEK_API_KEY in your environment or .env file.[/yellow]"
-            )
+            console.print("\n[bold red]Error: DeepSeek API Key not found![/bold red]")
+            console.print("Please run '[bold white]capture-help config --key YOUR_API_KEY[/bold white]' or set DEEPSEEK_API_KEY in your environment.")
             sys.exit(1)
 
         self.client = OpenAI(
@@ -39,18 +70,15 @@ class DeepSeekProvider(BaseLLMProvider):
             base_url=self.base_url,
         )
 
-    def _prepare_messages(self, messages: List[Dict[str, str]], system_prompt: Optional[str] = None) -> List[Dict[str, str]]:
-        formatted = []
-        if system_prompt:
-            formatted.append({"role": "system", "content": system_prompt})
-        formatted.extend(messages)
-        return formatted
-
-    def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
-        # DeepSeek pricing: $0.14 per 1M input tokens, $0.28 per 1M output tokens
-        input_cost = (prompt_tokens / 1_000_000) * 0.14
-        output_cost = (completion_tokens / 1_000_000) * 0.28
-        return input_cost + output_cost
+    def calculate_cost(self, prompt_tokens: int, completion_tokens: int, cache_hit_tokens: int = 0) -> float:
+        pricing = DEEPSEEK_MODELS.get(self.model, DEEPSEEK_MODELS["deepseek-chat"])
+        
+        miss_tokens = max(0, prompt_tokens - cache_hit_tokens)
+        input_cost = (miss_tokens / 1_000_000) * pricing["input_cost_per_m"]
+        cache_cost = (cache_hit_tokens / 1_000_000) * pricing["cache_cost_per_m"]
+        output_cost = (completion_tokens / 1_000_000) * pricing["output_cost_per_m"]
+        
+        return input_cost + cache_cost + output_cost
 
     def stream_completion(
         self,
@@ -58,39 +86,40 @@ class DeepSeekProvider(BaseLLMProvider):
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
     ) -> Generator[Tuple[str, Optional[TokenUsageStats]], None, None]:
-        formatted_messages = self._prepare_messages(messages, system_prompt)
+        formatted = []
+        if system_prompt:
+            formatted.append({"role": "system", "content": system_prompt})
+        formatted.extend(messages)
+
         start_time = time.time()
-        
+        prompt_tokens = 0
+        completion_tokens = 0
+        cache_hit_tokens = 0
+
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=formatted_messages,
+                messages=formatted,
                 temperature=temperature,
                 stream=True,
-                stream_options={"include_usage": True}
+                stream_options={"include_usage": True},
             )
-            
-            prompt_tokens = 0
-            completion_tokens = 0
-            total_tokens = 0
 
             for chunk in response:
                 if chunk.usage:
                     prompt_tokens = chunk.usage.prompt_tokens
                     completion_tokens = chunk.usage.completion_tokens
-                    total_tokens = chunk.usage.total_tokens
+                    if hasattr(chunk.usage, "prompt_tokens_details") and chunk.usage.prompt_tokens_details:
+                        cache_hit_tokens = getattr(chunk.usage.prompt_tokens_details, "cached_tokens", 0)
 
                 if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content, None
+                    content_piece = chunk.choices[0].delta.content
+                    yield content_piece, None
 
             duration = time.time() - start_time
-            # Fallback estimation if usage stats not provided by stream
-            if total_tokens == 0:
-                prompt_text = "".join(m["content"] for m in formatted_messages)
-                prompt_tokens = max(1, len(prompt_text) // 4)
-                total_tokens = prompt_tokens + completion_tokens
+            total_tokens = prompt_tokens + completion_tokens
+            cost = self.calculate_cost(prompt_tokens, completion_tokens, cache_hit_tokens)
 
-            cost = self.calculate_cost(prompt_tokens, completion_tokens)
             stats = TokenUsageStats(
                 duration_seconds=duration,
                 prompt_tokens=prompt_tokens,
@@ -98,14 +127,12 @@ class DeepSeekProvider(BaseLLMProvider):
                 total_tokens=total_tokens,
                 cost_usd=cost,
                 model=self.model,
+                cache_hit_tokens=cache_hit_tokens,
             )
             yield "", stats
 
-        except AuthenticationError:
-            console.print("\n[bold red]API Error:[/bold red] Invalid DeepSeek API key. Please check your credentials using 'capture-help config'.")
-            sys.exit(1)
         except APIConnectionError:
-            console.print("\n[bold red]Network Error:[/bold red] Could not connect to DeepSeek API endpoint at " + self.base_url)
+            console.print("\n[bold red]Network Error:[/bold red] Could not connect to DeepSeek API at " + self.base_url)
             sys.exit(1)
         except APIError as e:
             console.print(f"\n[bold red]DeepSeek API Error:[/bold red] {e.message}")
@@ -122,16 +149,12 @@ class DeepSeekProvider(BaseLLMProvider):
     ) -> Tuple[str, Optional[TokenUsageStats]]:
         text_chunks = []
         final_stats = None
-        for chunk, stats in self.stream_completion(messages, system_prompt=system_prompt, temperature=temperature):
+        for chunk, stats in self.stream_completion(messages, system_prompt, temperature):
             if chunk:
                 text_chunks.append(chunk)
             if stats:
                 final_stats = stats
         return "".join(text_chunks), final_stats
 
-def get_provider() -> BaseLLMProvider:
-    provider_name = settings.default_provider.lower()
-    if provider_name == "ollama":
-        from capture_help.providers.ollama import OllamaProvider
-        return OllamaProvider(model=settings.deepseek_model)
-    return DeepSeekProvider()
+def get_provider(model: Optional[str] = None) -> BaseLLMProvider:
+    return DeepSeekProvider(model=model)

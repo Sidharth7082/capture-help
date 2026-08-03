@@ -8,7 +8,7 @@ runner = CliRunner()
 def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "2.0.0" in result.stdout
+    assert "2.1.0" in result.stdout
 
 def test_doctor_command():
     result = runner.invoke(app, ["doctor"])
@@ -18,7 +18,7 @@ def test_doctor_command():
 def test_models_command():
     result = runner.invoke(app, ["models"])
     assert result.exit_code == 0
-    assert "deepseek-chat" in result.stdout
+    assert "deepseek-v4-flash" in result.stdout
 
 def test_tui_command():
     result = runner.invoke(app, ["tui"])

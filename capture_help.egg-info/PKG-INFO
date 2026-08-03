@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: capture-help
-Version: 2.0.0
+Version: 2.1.0
 Summary: A fast, modern, project-aware terminal AI assistant powered by DeepSeek API
 Author-email: Capture Team <capture@example.com>
 Classifier: Programming Language :: Python :: 3
