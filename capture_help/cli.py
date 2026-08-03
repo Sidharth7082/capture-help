@@ -22,10 +22,20 @@ from capture_help.commands.tui import tui_command
 from capture_help.commands.stats import stats_command
 from capture_help.commands.web import web_command
 from capture_help.commands.team import team_command
+from capture_help.commands.pr import pr_command
+from capture_help.commands.audit import audit_command
+from capture_help.commands.diagram import diagram_command
+from capture_help.commands.script import script_command
+from capture_help.commands.clean import clean_command
+from capture_help.commands.changelog import changelog_command
+from capture_help.commands.benchmark import benchmark_command
+from capture_help.commands.refactor import refactor_command
+from capture_help.commands.secrets import secrets_command
+from capture_help.commands.translate import translate_command
 
 app = typer.Typer(
     name=__app_name__,
-    help="⚡ capture-help v2.2.0: A fast, modern terminal AI assistant powered by DeepSeek API.",
+    help="⚡ capture-help v3.0.0: The ultimate terminal AI assistant powered by DeepSeek API.",
     add_completion=False,
     rich_markup_mode="rich",
 )
@@ -48,10 +58,81 @@ def main(
     )
 ):
     """
-    ⚡ capture-help v2.2.0 CLI: AI-powered developer assistant in your Linux terminal.
+    ⚡ capture-help v3.0.0 CLI: AI-powered developer assistant in your Linux terminal.
     """
     if ctx.invoked_subcommand is None:
         chat_command()
+
+@app.command("pr")
+def pr(
+    copy: bool = typer.Option(False, "--copy", "-c", help="Copy PR text to clipboard."),
+    export: Optional[str] = typer.Option(None, "--export", "-e", help="Export PR description to markdown file."),
+):
+    """Generate GitHub Pull Request description from git diff."""
+    pr_command(copy=copy, export=export)
+
+@app.command("audit")
+def audit():
+    """Audit project dependencies for security vulnerabilities."""
+    audit_command()
+
+@app.command("diagram")
+def diagram(
+    target: Optional[str] = typer.Argument(None, help="Path to source file or pipe via stdin."),
+    copy: bool = typer.Option(False, "--copy", "-c", help="Copy Mermaid code to clipboard."),
+    export: Optional[str] = typer.Option(None, "--export", "-e", help="Export Mermaid code to markdown file."),
+):
+    """Generate Mermaid architecture diagram for code file or stdin."""
+    diagram_command(target, copy=copy, export=export)
+
+@app.command("script")
+def script(
+    task: str = typer.Argument(..., help="Automation task description.")
+):
+    """Generate production-ready Bash automation script."""
+    script_command(task)
+
+@app.command("clean")
+def clean(
+    filepath: Optional[str] = typer.Argument(None, help="Path to source file or stdin.")
+):
+    """Scan file for dead code, unused imports, and redundant logic."""
+    clean_command(filepath)
+
+@app.command("changelog")
+def changelog(
+    export: Optional[str] = typer.Option("CHANGELOG.md", "--export", "-e", help="File to export changelog to.")
+):
+    """Generate GitHub-style CHANGELOG.md from git commit history."""
+    changelog_command(export=export)
+
+@app.command("benchmark")
+def benchmark():
+    """Benchmark DeepSeek API latency (TTFT) and throughput (Tokens/sec)."""
+    benchmark_command()
+
+@app.command("refactor")
+def refactor(
+    old_symbol: str = typer.Argument(..., help="Symbol to rename."),
+    new_symbol: str = typer.Argument(..., help="New symbol name.")
+):
+    """Refactor and rename a function, variable, or class symbol across all project files."""
+    refactor_command(old_symbol, new_symbol)
+
+@app.command("secrets")
+def secrets():
+    """Inspect codebase for hardcoded API keys, tokens, or credentials."""
+    secrets_command()
+
+@app.command("translate")
+def translate(
+    filepath: str = typer.Argument(..., help="Path to source file."),
+    to: str = typer.Option("cpp", "--to", "-t", help="Target programming language (cpp, rust, python, ts, go)."),
+    copy: bool = typer.Option(False, "--copy", "-c", help="Copy translated code to clipboard."),
+    export: Optional[str] = typer.Option(None, "--export", "-e", help="Export translated code to file."),
+):
+    """Translate source code from one programming language to another."""
+    translate_command(filepath, to=to, copy=copy, export=export)
 
 @app.command("stats")
 def stats():

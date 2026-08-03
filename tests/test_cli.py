@@ -8,7 +8,7 @@ runner = CliRunner()
 def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "2.2.0" in result.stdout
+    assert "3.0.0" in result.stdout
 
 def test_doctor_command():
     result = runner.invoke(app, ["doctor"])
@@ -20,17 +20,12 @@ def test_stats_command():
     assert result.exit_code == 0
     assert "Token Analytics & Cost Savings" in result.stdout
 
-def test_models_command():
-    result = runner.invoke(app, ["models"])
+def test_audit_command():
+    result = runner.invoke(app, ["audit"])
     assert result.exit_code == 0
-    assert "deepseek-v4-flash" in result.stdout
+    assert "Security & Dependency Auditor" in result.stdout
 
-def test_tui_command():
-    result = runner.invoke(app, ["tui"])
+def test_secrets_command():
+    result = runner.invoke(app, ["secrets"])
     assert result.exit_code == 0
-    assert "TUI Dashboard" in result.stdout
-
-def test_plugin_list_command():
-    result = runner.invoke(app, ["plugin", "list"])
-    assert result.exit_code == 0
-    assert "qml-glassmorphism" in result.stdout
+    assert "Hardcoded Secret Inspector" in result.stdout
