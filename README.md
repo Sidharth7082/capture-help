@@ -1,0 +1,99 @@
+# ⚡ capture-help
+
+> A fast, modern terminal AI assistant powered by the official DeepSeek API. Built with Python, Typer, Rich, and the OpenAI SDK.
+
+---
+
+## 🌟 Features
+
+- **⚡ Fast Streaming**: Stream response tokens directly to your terminal in real-time.
+- **🎨 Rich Terminal UI**: Styled panels, project summaries, log metrics, and syntax highlighting.
+- **🔍 Smart Build Log Diagnosis**: Automatically detects compiler errors (gcc, clang, cmake, cargo, npm, python tracebacks) in build logs and explains root causes in plain English.
+- **📦 Executive Code Reviews**: Analyzes files or entire project directories with a visual summary table (languages, line counts, warnings, potential bugs, dead code).
+- **📝 Git Commit Generator**: Inspects `git diff` and generates conventional commit messages with copy-paste commands.
+- **🧪 Unit Test & Docs Generator**: Generates comprehensive unit tests and technical documentation.
+- **⚙️ Flexible Configuration**: Manages DeepSeek API key and endpoints via `.env`, environment variables, or interactive `capture-help config`.
+- **🔌 Extensible Architecture**: Modular provider interface (`BaseLLMProvider`) designed for easy addition of OpenAI, OpenRouter, or local LLMs.
+
+---
+
+## 🚀 Quick Start & Installation
+
+### Option 1: Install locally in editable mode
+
+```bash
+git clone https://github.com/capture/capture-help.git
+cd capture-help
+pip install -e .
+```
+
+### Option 2: Run with Virtual Environment
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
+```
+
+---
+
+## ⚙️ Configuration
+
+Set your DeepSeek API key using the interactive configuration manager:
+
+```bash
+capture-help config
+```
+
+Or set `DEEPSEEK_API_KEY` in your environment or `.env` file:
+
+```env
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+DEFAULT_PROVIDER=deepseek
+```
+
+---
+
+## 🛠️ Command Reference
+
+| Command | Description |
+| :--- | :--- |
+| `capture-help chat` | Interactive AI terminal chat with conversation history. |
+| `capture-help explain <file|build.log>` | Explain source files or analyze compiler error logs in plain English. |
+| `capture-help fix <file>` | Identify bugs, logic errors, and anti-patterns with refactored code. |
+| `capture-help review <file|dir>` | Perform an automated code review with a visual Project Summary dashboard. |
+| `capture-help docs <file>` | Generate technical documentation and docstrings. |
+| `capture-help commit` | Read `git diff` and generate conventional commit messages. |
+| `capture-help test <file>` | Generate unit tests for pytest, catch2, cargo test, etc. |
+| `capture-help optimize <file>` | Analyze performance & memory bottlenecks with Big-O complexity. |
+| `capture-help config` | View or update DeepSeek API key and base URL settings. |
+
+---
+
+## 💡 Examples
+
+### 1. Smart Build Log Explanation
+```bash
+capture-help explain build.log
+```
+Outputs a diagnostic summary table showing log lines, compiler error counts, and plain-English root causes with step-by-step fixes.
+
+### 2. Project Directory Code Review
+```bash
+capture-help review .
+```
+Outputs a `📦 Project Summary` box showing language breakdowns, total files, and code volume alongside architectural recommendations.
+
+### 3. Git Commit Message Generator
+```bash
+capture-help commit
+```
+Reads current staged or unstaged `git diff` and generates a clean `feat:` or `fix:` commit message.
+
+---
+
+## 📜 License
+
+MIT License © Capture Team

@@ -1,0 +1,35 @@
+from rich.console import Console
+from rich.panel import Panel
+
+from capture_help.deepseek import get_provider
+from capture_help.utils import print_header, get_git_diff, stream_response
+
+console = Console()
+
+COMMIT_PROMPT = """You are a Git commit message expert following Conventional Commits specification (feat:, fix:, docs:, refactor:, perf:, test:, chore:).
+Analyze the following git diff output:
+
+```diff
+{diff}
+```
+
+Instructions:
+1. Write a single-line summary (under 72 chars) starting with a conventional type (e.g. `feat: ...` or `fix: ...`).
+2. Provide a short bulleted list of key changes.
+3. Provide a ready-to-copy `git commit -m "..."` command snippet."""
+
+def commit_command():
+    """Read git diff and generate a Conventional Commit message."""
+    print_header("Git Commit Helper", "Analyzing staged / unstaged repository changes")
+
+    diff = get_git_diff()
+    if not diff:
+        console.print("[bold yellow]No git changes detected![/bold yellow]\nMake sure you are inside a Git repo with staged or unstaged changes (`git diff` or `git status`).")
+        return
+
+    console.print(f"[bold cyan]Detected git changes ({len(diff.splitlines())} diff lines). Generating commit message...[/bold cyan]\n")
+
+    provider = get_provider()
+    prompt = COMMIT_PROMPT.format(diff=diff[:15_000])
+    gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
+    stream_response(gen, console)
