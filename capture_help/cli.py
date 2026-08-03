@@ -28,8 +28,9 @@ def version_callback(value: bool):
         typer.echo(f"{__app_name__} version {__version__}")
         raise typer.Exit()
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     version: Optional[bool] = typer.Option(
         None,
         "--version",
@@ -42,7 +43,8 @@ def main(
     """
     ⚡ capture-help CLI: AI-powered developer assistant in your Linux terminal.
     """
-    pass
+    if ctx.invoked_subcommand is None:
+        chat_command()
 
 @app.command("doctor")
 def doctor():
