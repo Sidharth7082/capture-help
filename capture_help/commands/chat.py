@@ -2,8 +2,16 @@ import sys
 import uuid
 from typing import List, Dict, Optional, Tuple
 from rich.console import Console
-from rich.prompt import Prompt
 from rich.table import Table
+
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.formatted_text import HTML
+    PROMPT_TOOLKIT_AVAILABLE = True
+except ImportError:
+    PROMPT_TOOLKIT_AVAILABLE = False
+    from rich.prompt import Prompt
 
 from capture_help.config import settings, save_config
 from capture_help.deepseek import get_provider, DEEPSEEK_MODELS
@@ -20,6 +28,33 @@ from capture_help.agent import (
 )
 
 console = Console()
+
+SLASH_COMMAND_SUGGESTIONS = [
+    ("/cheap", "Switch to ultra-cheap DeepSeek V4-Flash model ($0.07 / 1M tokens)"),
+    ("/model", "View or switch active DeepSeek AI model"),
+    ("/plan", "Create step-by-step implementation plan"),
+    ("/read", "Read file content into AI chat context"),
+    ("/run", "Run terminal shell command and attach output"),
+    ("/search", "Search project codebase for keywords"),
+    ("/diff", "Attach current git diff to chat context"),
+    ("/clear", "Clear conversation history"),
+    ("/help", "Show interactive slash commands menu"),
+    ("/exit", "Save chat session and exit"),
+]
+
+if PROMPT_TOOLKIT_AVAILABLE:
+    class SlashCompleter(Completer):
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            if text.startswith("/"):
+                for cmd, desc in SLASH_COMMAND_SUGGESTIONS:
+                    if cmd.startswith(text):
+                        yield Completion(
+                            cmd,
+                            start_position=-len(text),
+                            display=cmd,
+                            display_meta=desc
+                        )
 
 def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[bool, Optional[str]]:
     parts = cmd_text.strip().split(maxsplit=1)
@@ -123,8 +158,8 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
     return False, None
 
 def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, session_id: Optional[str] = None):
-    """Cache-optimized interactive chat with deterministic system prefix."""
-    print_header("AI Assistant Chat", "Cache-optimized stream. Type /cheap for V4-Flash, /help for commands, /exit to quit.")
+    """Interactive AI chat with live prompt_toolkit slash autocompletion popup."""
+    print_header("AI Assistant Chat", "Type / for live autocompletion popup. Type /exit to quit.")
     
     info = render_project_badge()
     cached_system_prompt = get_cached_system_prompt(info["name"], info["languages"])
@@ -135,10 +170,16 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
     if history:
         console.print(f"[dim]Loaded {len(history)} previous message(s).[/dim]")
 
+    if PROMPT_TOOLKIT_AVAILABLE:
+        session = PromptSession(completer=SlashCompleter())
+
     while True:
         try:
-            provider = get_provider()
-            user_input = Prompt.ask("\n[bold cyan]capture-help>[/bold cyan] ").strip()
+            if PROMPT_TOOLKIT_AVAILABLE:
+                user_input = session.prompt("\ncapture-help> ").strip()
+            else:
+                user_input = Prompt.ask("\n[bold cyan]capture-help>[/bold cyan] ").strip()
+
             if not user_input:
                 continue
 
@@ -167,6 +208,7 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
             pruned_history = history[-6:]
             
             console.print(f"[dim]Thinking ({settings.deepseek_model})...[/dim]")
+            provider = get_provider()
             gen = provider.stream_completion(messages=pruned_history, system_prompt=cached_system_prompt)
             assistant_reply, stats = stream_response(gen, console)
 
