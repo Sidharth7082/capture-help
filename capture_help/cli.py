@@ -15,6 +15,8 @@ from capture_help.commands.doctor import doctor_command
 from capture_help.commands.config_cmd import config_command, list_models_command, set_model_command
 from capture_help.commands.alias import alias_command
 from capture_help.commands.history_cmd import history_command, resume_command
+from capture_help.commands.hook import hook_command
+from capture_help.commands.index_cmd import index_command
 
 app = typer.Typer(
     name=__app_name__,
@@ -64,6 +66,18 @@ def ask(
 def chat():
     """Start an interactive AI chat session in the terminal."""
     chat_command()
+
+@app.command("index")
+def index():
+    """Index repository files into local SQLite search database for sub-second context lookups."""
+    index_command()
+
+@app.command("hook")
+def hook(
+    action: str = typer.Argument("install", help="Action: 'install' or 'uninstall'.")
+):
+    """Install or uninstall Git pre-commit security review hook."""
+    hook_command(action=action)
 
 @app.command("explain")
 def explain(
@@ -148,7 +162,7 @@ def models():
 
 @app.command("model")
 def model(
-    model_name: str = typer.Argument(..., help="Model name to activate (e.g. deepseek-chat, deepseek-reasoner).")
+    model_name: str = typer.Argument(..., help="Model name to activate (e.g. deepseek-chat, deepseek-v4-flash, deepseek-reasoner).")
 ):
     """Switch the active DeepSeek model."""
     set_model_command(model_name)
@@ -158,8 +172,9 @@ def config(
     key: Optional[str] = typer.Option(None, "--key", "-k", help="DeepSeek API key."),
     base_url: Optional[str] = typer.Option(None, "--base-url", "-u", help="DeepSeek API base URL."),
     model_name: Optional[str] = typer.Option(None, "--model", "-m", help="DeepSeek model name."),
+    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Provider name (deepseek, ollama)."),
 ):
-    """Configure or view DeepSeek API credentials and settings."""
+    """Configure or view DeepSeek / Ollama API credentials and settings."""
     config_command(key=key, base_url=base_url, model=model_name)
 
 if __name__ == "__main__":

@@ -26,6 +26,9 @@ capture_help/commands/doctor.py
 capture_help/commands/explain.py
 capture_help/commands/fix.py
 capture_help/commands/history_cmd.py
+capture_help/commands/hook.py
+capture_help/commands/index_cmd.py
 capture_help/commands/optimize.py
 capture_help/commands/review.py
 capture_help/commands/test.py
+capture_help/providers/ollama.py

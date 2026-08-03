@@ -130,4 +130,8 @@ class DeepSeekProvider(BaseLLMProvider):
         return "".join(text_chunks), final_stats
 
 def get_provider() -> BaseLLMProvider:
+    provider_name = settings.default_provider.lower()
+    if provider_name == "ollama":
+        from capture_help.providers.ollama import OllamaProvider
+        return OllamaProvider(model=settings.deepseek_model)
     return DeepSeekProvider()
