@@ -50,28 +50,49 @@ DEEPSEEK_MODELS = {
         "output_cost_per_m": 2.19,
         "cache_cost_per_m": 0.14,
     },
+    "gemma3:12b": {
+        "name": "Google Gemma 3 12B (Q4)",
+        "description": "Google Gemma 3 12B 4-bit quantized local model ($0.00 / FREE Local Ollama)",
+        "input_cost_per_m": 0.00,
+        "output_cost_per_m": 0.00,
+        "cache_cost_per_m": 0.00,
+    },
+    "gemma3:27b": {
+        "name": "Google Gemma 3 27B (Q4)",
+        "description": "Google Gemma 3 27B 4-bit quantized local model ($0.00 / FREE Local Ollama)",
+        "input_cost_per_m": 0.00,
+        "output_cost_per_m": 0.00,
+        "cache_cost_per_m": 0.00,
+    },
 }
 
 class DeepSeekProvider(BaseLLMProvider):
-    """Official DeepSeek API Provider implementation."""
+    """Official DeepSeek & Local Ollama API Provider implementation."""
 
     def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or settings.deepseek_api_key
         self.base_url = base_url or settings.deepseek_base_url
         self.model = model or settings.deepseek_model
 
-        if not self.api_key:
+        if "gemma" in self.model.lower():
+            # Local Ollama endpoint support for Gemma 3
+            if "api.deepseek.com" in self.base_url:
+                self.base_url = "http://localhost:11434/v1"
+            if not self.api_key:
+                self.api_key = "ollama"
+
+        if not self.api_key and "gemma" not in self.model.lower():
             console.print("\n[bold red]Error: DeepSeek API Key not found![/bold red]")
             console.print("Please run '[bold white]capture-help config --key YOUR_API_KEY[/bold white]' or set DEEPSEEK_API_KEY in your environment.")
             sys.exit(1)
 
         self.client = OpenAI(
-            api_key=self.api_key,
+            api_key=self.api_key or "ollama",
             base_url=self.base_url,
         )
 
     def calculate_cost(self, prompt_tokens: int, completion_tokens: int, cache_hit_tokens: int = 0) -> float:
-        pricing = DEEPSEEK_MODELS.get(self.model, DEEPSEEK_MODELS["deepseek-chat"])
+        pricing = DEEPSEEK_MODELS.get(self.model, {"input_cost_per_m": 0.0, "cache_cost_per_m": 0.0, "output_cost_per_m": 0.0})
         
         miss_tokens = max(0, prompt_tokens - cache_hit_tokens)
         input_cost = (miss_tokens / 1_000_000) * pricing["input_cost_per_m"]
@@ -106,7 +127,7 @@ class DeepSeekProvider(BaseLLMProvider):
             )
 
             for chunk in response:
-                if chunk.usage:
+                if hasattr(chunk, "usage") and chunk.usage:
                     prompt_tokens = chunk.usage.prompt_tokens
                     completion_tokens = chunk.usage.completion_tokens
                     if hasattr(chunk.usage, "prompt_tokens_details") and chunk.usage.prompt_tokens_details:
@@ -132,10 +153,10 @@ class DeepSeekProvider(BaseLLMProvider):
             yield "", stats
 
         except APIConnectionError:
-            console.print("\n[bold red]Network Error:[/bold red] Could not connect to DeepSeek API at " + self.base_url)
+            console.print("\n[bold red]Network Error:[/bold red] Could not connect to API at " + self.base_url)
             sys.exit(1)
         except APIError as e:
-            console.print(f"\n[bold red]DeepSeek API Error:[/bold red] {e.message}")
+            console.print(f"\n[bold red]API Error:[/bold red] {e.message}")
             sys.exit(1)
         except Exception as e:
             console.print(f"\n[bold red]Unexpected Error:[/bold red] {str(e)}")

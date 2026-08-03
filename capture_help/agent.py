@@ -28,6 +28,15 @@ Available Tool Commands:
 - TOOL_WRITE: <filepath to write>
 - TOOL_SEARCH: <query to search codebase>"""
 
+def clean_tool_cmd(cmd: str) -> str:
+    """Safely strip outer wrapping quotes or backticks without destroying internal/closing shell quotes."""
+    cmd = cmd.strip()
+    if (cmd.startswith("`") and cmd.endswith("`")) or \
+       (cmd.startswith('"') and cmd.endswith('"') and cmd.count('"') == 2) or \
+       (cmd.startswith("'") and cmd.endswith("'") and cmd.count("'") == 2):
+        cmd = cmd[1:-1].strip()
+    return cmd
+
 def agent_read_file(filepath: str) -> str:
     path = Path(filepath).expanduser().resolve()
     if not path.exists():
@@ -104,20 +113,20 @@ def check_and_execute_agent_tools(response_text: str) -> Tuple[bool, str]:
     # 1. Standard TOOL_RUN: command
     run_matches = re.findall(r"TOOL_RUN:\s*([^\n]+)", response_text, re.IGNORECASE)
     for cmd in run_matches:
-        cmd = cmd.strip(" `\"'")
+        cmd = clean_tool_cmd(cmd)
         console.print(f"[bold cyan]🔧 Executing Tool: Run Command '{cmd}'[/bold cyan]")
         res = agent_run_command(cmd)
         output_log += f"\n[Tool Result RUN_COMMAND '{cmd}']:\n{res}\n"
         tool_executed = True
 
-    # 2. DeepSeek DSML tool_calls format: <| | DSML | | invoke name="bash"> ... <| | DSML | | parameter string="true">cmd</| | DSML | | parameter>
+    # 2. DeepSeek DSML tool_calls format
     dsml_matches = re.findall(
         r"parameter[^>]*>(.*?)</\|",
         response_text,
         re.DOTALL | re.IGNORECASE
     )
     for cmd in dsml_matches:
-        cmd = cmd.strip(" `\"'\n\r")
+        cmd = clean_tool_cmd(cmd)
         if cmd and not tool_executed:
             console.print(f"[bold cyan]🔧 Executing DeepSeek Tool Call: '{cmd}'[/bold cyan]")
             res = agent_run_command(cmd)
@@ -127,7 +136,7 @@ def check_and_execute_agent_tools(response_text: str) -> Tuple[bool, str]:
     # 3. TOOL_READ: path
     read_matches = re.findall(r"TOOL_READ:\s*([^\n]+)", response_text, re.IGNORECASE)
     for path in read_matches:
-        path = path.strip(" `\"'")
+        path = clean_tool_cmd(path)
         console.print(f"[bold cyan]🔧 Executing Tool: Read File '{path}'[/bold cyan]")
         res = agent_read_file(path)
         output_log += f"\n[Tool Result READ_FILE '{path}']:\n{res}\n"
@@ -136,7 +145,7 @@ def check_and_execute_agent_tools(response_text: str) -> Tuple[bool, str]:
     # 4. TOOL_SEARCH: query
     search_matches = re.findall(r"TOOL_SEARCH:\s*([^\n]+)", response_text, re.IGNORECASE)
     for q in search_matches:
-        q = q.strip(" `\"'")
+        q = clean_tool_cmd(q)
         console.print(f"[bold cyan]🔧 Executing Tool: Search Code '{q}'[/bold cyan]")
         res = agent_search_codebase(q)
         output_log += f"\n[Tool Result SEARCH_CODE '{q}']:\n{res}\n"
@@ -145,7 +154,7 @@ def check_and_execute_agent_tools(response_text: str) -> Tuple[bool, str]:
     # 5. TOOL_WRITE: path
     write_matches = re.findall(r"TOOL_WRITE:\s*([^\n]+)", response_text, re.IGNORECASE)
     for path in write_matches:
-        path = path.strip(" `\"'")
+        path = clean_tool_cmd(path)
         console.print(f"[bold cyan]🔧 Executing Tool: Write File '{path}'[/bold cyan]")
         code_block = re.search(r"```(?:\w+)?\n(.*?)```", response_text, re.DOTALL)
         content = code_block.group(1) if code_block else ""

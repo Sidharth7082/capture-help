@@ -48,8 +48,9 @@ POPUP_STYLE = Style.from_dict({
 })
 
 SLASH_COMMAND_SUGGESTIONS = [
+    ("/gemma", "Switch to local Google Gemma 3 12B (Q4) model (FREE / Local Ollama)"),
     ("/cheap", "Switch to ultra-cheap DeepSeek V4-Flash model ($0.07 / 1M tokens)"),
-    ("/model", "View or switch active DeepSeek AI model"),
+    ("/model", "View or switch active AI model"),
     ("/plan", "Create step-by-step implementation plan"),
     ("/read", "Read file content into AI chat context"),
     ("/run", "Run terminal shell command and attach output"),
@@ -79,25 +80,39 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
     sub = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ""
 
+    if sub == "/gemma":
+        save_config(
+            api_key=settings.deepseek_api_key or "ollama",
+            base_url="http://localhost:11434/v1",
+            model="gemma3:12b",
+            provider="ollama",
+        )
+        console.print("[bold green]🥇 Activated Google Gemma 3 12B (Q4) Local Model![/bold green] (FREE via Ollama http://localhost:11434)")
+        return True, None
+
     if sub == "/model":
         if not arg:
-            table = Table(title="🤖 Official DeepSeek Models", border_style="cyan")
+            table = Table(title="🤖 Available AI Models", border_style="cyan")
             table.add_column("Model Key", style="bold yellow")
             table.add_column("Model Name", style="bold white")
             table.add_column("Status", style="bold green")
             table.add_column("Input Cost (per 1M)", style="green")
             for key, data in DEEPSEEK_MODELS.items():
                 status = "[bold green]✓ Active[/bold green]" if key == settings.deepseek_model else ""
-                table.add_row(key, data["name"], status, f"${data['input_cost_per_m']:.2f}")
+                cost_str = "FREE (Local)" if data['input_cost_per_m'] == 0 else f"${data['input_cost_per_m']:.2f}"
+                table.add_row(key, data["name"], status, cost_str)
             console.print(table)
-            console.print("[dim]To switch model: [bold white]/model deepseek-v4-flash[/bold white] or [bold white]/model deepseek-chat[/bold white][/dim]")
+            console.print("[dim]To switch model: [bold white]/model gemma3:12b[/bold white] or [bold white]/model deepseek-v4-flash[/bold white][/dim]")
         else:
             p_key = arg.lower().strip()
             if p_key in DEEPSEEK_MODELS:
+                prov = "ollama" if "gemma" in p_key else "deepseek"
+                url = "http://localhost:11434/v1" if "gemma" in p_key else settings.deepseek_base_url
                 save_config(
-                    api_key=settings.deepseek_api_key,
-                    base_url=settings.deepseek_base_url,
+                    api_key=settings.deepseek_api_key or "ollama",
+                    base_url=url,
                     model=p_key,
+                    provider=prov,
                 )
                 console.print(f"[bold green]✓ Switched active model to:[bold white] {DEEPSEEK_MODELS[p_key]['name']} ({p_key})[/bold white]")
             else:
@@ -107,8 +122,9 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
     if sub == "/cheap":
         save_config(
             api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_base_url,
+            base_url="https://api.deepseek.com",
             model="deepseek-v4-flash",
+            provider="deepseek",
         )
         console.print("[bold green]⚡ Ultra-Cheap Mode Activated![/bold green] Active model: [bold white]deepseek-v4-flash[/bold white] ($0.07 / 1M tokens)")
         return True, None
@@ -162,8 +178,9 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
         table = Table(title="⚡ Slash Commands", border_style="cyan")
         table.add_column("Command", style="bold yellow")
         table.add_column("Description", style="white")
+        table.add_row("/gemma", "Enable Google Gemma 3 12B (Q4) FREE local Ollama model")
         table.add_row("/cheap", "Enable ultra-cheap DeepSeek V4-Flash model ($0.07 / 1M tokens)")
-        table.add_row("/model [name]", "Switch model (deepseek-v4-flash, deepseek-chat, deepseek-coder, deepseek-reasoner)")
+        table.add_row("/model [name]", "Switch model (gemma3:12b, deepseek-v4-flash, deepseek-chat, deepseek-coder, deepseek-reasoner)")
         table.add_row("/read <file>", "Read file into chat context")
         table.add_row("/run <cmd>", "Run shell command and attach output")
         table.add_row("/search <query>", "Search project codebase")
