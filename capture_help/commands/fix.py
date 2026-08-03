@@ -9,6 +9,8 @@ from capture_help.utils import (
     stream_response,
     prompt_apply_patch,
     render_project_badge,
+    copy_to_clipboard,
+    export_to_markdown,
 )
 
 console = Console()
@@ -27,7 +29,11 @@ Instructions:
 
 Format your response with headings: '## 🐛 Detected Issues', '## 🛠️ Fixed Implementation', '## 📝 Summary of Fixes'."""
 
-def fix_command(target: Optional[str] = None):
+def fix_command(
+    target: Optional[str] = None,
+    copy: bool = False,
+    export: Optional[str] = None,
+):
     """Analyze a file or piped input and suggest concrete fixes with interactive diff patching."""
     content, path, name = read_stdin_or_file(target)
     print_header("Code Fixer & Debugger", f"Diagnosing {name}")
@@ -41,9 +47,13 @@ def fix_command(target: Optional[str] = None):
     gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
     full_response, stats = stream_response(gen, console)
 
-    # Extract suggested code block if path exists (file-based)
     if path:
         code_match = re.search(r"```(?:\w+)?\n(.*?)```", full_response, re.DOTALL)
         if code_match:
             new_code = code_match.group(1)
             prompt_apply_patch(path, content, new_code)
+
+    if copy and full_response:
+        copy_to_clipboard(full_response)
+    if export and full_response:
+        export_to_markdown(export, full_response)

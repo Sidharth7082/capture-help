@@ -21,6 +21,7 @@ capture_help/commands/chat.py
 capture_help/commands/commit.py
 capture_help/commands/config_cmd.py
 capture_help/commands/docs.py
+capture_help/commands/doctor.py
 capture_help/commands/explain.py
 capture_help/commands/fix.py
 capture_help/commands/history_cmd.py

@@ -1,8 +1,42 @@
 import os
 import re
-import math
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
+
+DEFAULT_IGNORE_DIRS = {
+    ".git", "venv", ".venv", "node_modules", "build", "dist",
+    ".cache", "target", "__pycache__", ".eggs", "*.egg-info", ".idea", ".vscode"
+}
+
+def load_ignore_patterns(root_path: Path) -> List[str]:
+    """Load ignore rules from .capturehelpignore in project root or user config."""
+    patterns = list(DEFAULT_IGNORE_DIRS)
+    
+    # Check project root .capturehelpignore
+    proj_ignore = root_path / ".capturehelpignore"
+    if proj_ignore.exists():
+        try:
+            with open(proj_ignore, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        patterns.append(line.rstrip("/"))
+        except Exception:
+            pass
+
+    # Check global config ignore
+    global_ignore = Path.home() / ".config" / "capture-help" / "ignore"
+    if global_ignore.exists():
+        try:
+            with open(global_ignore, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        patterns.append(line.rstrip("/"))
+        except Exception:
+            pass
+
+    return list(set(patterns))
 
 def find_project_root(start_path: Optional[Path] = None) -> Path:
     """Recursively search upward for git root or build configuration root."""
@@ -15,8 +49,8 @@ def find_project_root(start_path: Optional[Path] = None) -> Path:
 def fingerprint_project(root_path: Optional[Path] = None) -> Dict[str, Any]:
     """Analyze repository to detect languages, build systems, frameworks, and git status."""
     root = find_project_root(root_path)
+    ignore_patterns = load_ignore_patterns(root)
 
-    # Detect Build Systems
     build_systems = []
     if (root / "CMakeLists.txt").exists():
         build_systems.append("CMake")
@@ -29,19 +63,16 @@ def fingerprint_project(root_path: Optional[Path] = None) -> Dict[str, Any]:
     if (root / "Makefile").exists() or (root / "makefile").exists():
         build_systems.append("Makefile")
 
-    # Detect Frameworks
     frameworks = []
-    # Check C++/Qt
     for f in root.glob("*.qml"):
         frameworks.append("Qt / QML")
         break
     if not frameworks:
         for f in root.rglob("*.qml"):
-            if ".git" not in str(f) and "venv" not in str(f):
+            if not any(ign in str(f) for ign in ignore_patterns):
                 frameworks.append("Qt / QML")
                 break
 
-    # Scan languages
     lang_extensions = {
         ".cpp": "C++", ".hpp": "C++", ".c": "C", ".h": "C/C++",
         ".py": "Python", ".js": "JavaScript", ".ts": "TypeScript",
@@ -53,10 +84,8 @@ def fingerprint_project(root_path: Optional[Path] = None) -> Dict[str, Any]:
     lang_counts: Dict[str, int] = {}
     total_files = 0
 
-    ignore_dirs = {".git", "venv", ".venv", "node_modules", "build", "dist", "__pycache__", ".cache"}
-
     for r, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+        dirs[:] = [d for d in dirs if d not in ignore_patterns and not any(ign in d for ign in ignore_patterns)]
         for f in files:
             ext = Path(f).suffix.lower()
             if ext in lang_extensions:
@@ -67,7 +96,6 @@ def fingerprint_project(root_path: Optional[Path] = None) -> Dict[str, Any]:
     top_langs = sorted(lang_counts.items(), key=lambda x: x[1], reverse=True)[:4]
     lang_list = [l[0] for l in top_langs]
 
-    # Git status check
     git_clean = True
     if (root / ".git").exists():
         try:
@@ -88,33 +116,32 @@ def fingerprint_project(root_path: Optional[Path] = None) -> Dict[str, Any]:
         "total_files": total_files,
     }
 
-def search_project_context(query: str, root_path: Optional[Path] = None, top_k: int = 5) -> List[Tuple[Path, str, float]]:
-    """Scan and rank relevant project code snippets based on query keywords."""
+def search_project_context(query: str, root_path: Optional[Path] = None, top_k: int = 5) -> Tuple[List[Tuple[Path, str, float]], int]:
+    """Scan and rank relevant project code snippets based on query keywords. Returns (matches, scanned_files_count)."""
     root = find_project_root(root_path)
-    ignore_dirs = {".git", "venv", ".venv", "node_modules", "build", "dist", "__pycache__", ".cache", "target", "assets"}
+    ignore_patterns = load_ignore_patterns(root)
     valid_exts = {".cpp", ".hpp", ".c", ".h", ".py", ".js", ".ts", ".rs", ".go", ".qml", ".lua", ".sh", ".toml", ".json", ".txt", ".md"}
 
     query_words = set(re.findall(r"\w+", query.lower()))
     if not query_words:
-        return []
+        return [], 0
 
     file_scores: List[Tuple[Path, str, float]] = []
+    scanned_files_count = 0
 
     for r, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+        dirs[:] = [d for d in dirs if d not in ignore_patterns and not any(ign in d for ign in ignore_patterns)]
         for f in files:
             p = Path(r) / f
             if p.suffix.lower() not in valid_exts:
                 continue
 
+            scanned_files_count += 1
             try:
                 with open(p, "r", encoding="utf-8", errors="ignore") as fo:
                     text = fo.read(100_000)
 
-                # Filename matching bonus
                 filename_score = sum(3.0 for word in query_words if word in p.name.lower())
-
-                # Content keyword frequency matching
                 content_words = re.findall(r"\w+", text.lower())
                 if not content_words:
                     continue
@@ -128,4 +155,4 @@ def search_project_context(query: str, root_path: Optional[Path] = None, top_k: 
                 pass
 
     file_scores.sort(key=lambda x: x[2], reverse=True)
-    return file_scores[:top_k]
+    return file_scores[:top_k], scanned_files_count

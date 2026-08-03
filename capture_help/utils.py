@@ -1,6 +1,7 @@
 import os
 import sys
 import re
+import shutil
 import difflib
 import subprocess
 from pathlib import Path
@@ -10,7 +11,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.live import Live
 from rich.markdown import Markdown
-from rich.text import Text
 from rich.theme import Theme
 from rich.prompt import Confirm
 from rich.syntax import Syntax
@@ -38,11 +38,9 @@ def print_header(title: str, subtitle: Optional[str] = None):
     console.print(Panel(text, border_style="cyan", expand=False))
 
 def render_project_badge() -> Dict[str, Any]:
-    """Render a compact Project Intelligence badge and return project info dict."""
     info = fingerprint_project()
     langs_str = ", ".join(info["languages"]) if info["languages"] else "Generic"
     build_str = ", ".join(info["build_systems"]) if info["build_systems"] else "N/A"
-    frameworks_str = ", ".join(info["frameworks"]) if info["frameworks"] else "N/A"
     git_str = "[green]Clean[/green]" if info["git_clean"] else "[yellow]Modified[/yellow]"
 
     badge = (
@@ -56,11 +54,6 @@ def render_project_badge() -> Dict[str, Any]:
     return info
 
 def read_stdin_or_file(filepath_or_arg: Optional[str] = None, max_bytes: int = 500_000) -> Tuple[str, Optional[Path], str]:
-    """
-    Read content from sys.stdin if piped, or from filepath argument.
-    Returns (content, path_object_or_none, label_name)
-    """
-    # 1. Pipe support (stdin)
     if not sys.stdin.isatty():
         try:
             content = sys.stdin.read(max_bytes)
@@ -69,7 +62,6 @@ def read_stdin_or_file(filepath_or_arg: Optional[str] = None, max_bytes: int = 5
             console.print(f"[bold red]Error reading stdin:[/bold red] {e}")
             sys.exit(1)
 
-    # 2. Filepath provided
     if filepath_or_arg:
         path = Path(filepath_or_arg).expanduser().resolve()
         if not path.exists():
@@ -90,7 +82,6 @@ def read_stdin_or_file(filepath_or_arg: Optional[str] = None, max_bytes: int = 5
     sys.exit(1)
 
 def is_build_log(path: Optional[Path], content: str) -> bool:
-    """Detect if file or pipe input is a build log or log file."""
     if path and path.suffix in [".log", ".out", ".err", ".txt"]:
         if "log" in path.name.lower() or "build" in path.name.lower() or "make" in path.name.lower():
             return True
@@ -114,32 +105,40 @@ def extract_log_summary(content: str) -> Dict[str, Any]:
         "total_lines": len(lines),
     }
 
-def get_git_diff() -> str:
+def get_git_diff(ref: Optional[str] = None) -> str:
+    """Fetch git diff supporting ref flags (--staged, HEAD~3, origin/main)."""
     try:
-        res = subprocess.run(["git", "diff", "--staged"], capture_output=True, text=True, check=True)
-        diff = res.stdout.strip()
-        if not diff:
-            res = subprocess.run(["git", "diff"], capture_output=True, text=True, check=True)
+        cmd = ["git", "diff"]
+        if ref:
+            cmd.extend(ref.split())
+        else:
+            # Default fallback try staged then unstaged
+            res = subprocess.run(["git", "diff", "--staged"], capture_output=True, text=True, check=True)
             diff = res.stdout.strip()
-        if not diff:
-            res = subprocess.run(["git", "status", "--short"], capture_output=True, text=True, check=True)
-            diff = res.stdout.strip()
-        return diff
+            if diff:
+                return diff
+
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return res.stdout.strip()
     except Exception:
         return ""
 
 def stream_response(generator: Generator[Tuple[str, Any], None, None], console_obj: Optional[Console] = None) -> Tuple[str, Any]:
+    """Stream LLM response with real-time Rich Markdown rendering and Ctrl+C cancellation."""
     con = console_obj or console
     full_text = ""
     stats = None
 
-    with Live(Markdown(""), console=con, refresh_per_second=12) as live:
-        for chunk, usage_stats in generator:
-            if chunk:
-                full_text += chunk
-                live.update(Markdown(full_text))
-            if usage_stats:
-                stats = usage_stats
+    try:
+        with Live(Markdown(""), console=con, refresh_per_second=12) as live:
+            for chunk, usage_stats in generator:
+                if chunk:
+                    full_text += chunk
+                    live.update(Markdown(full_text))
+                if usage_stats:
+                    stats = usage_stats
+    except KeyboardInterrupt:
+        con.print("\n[bold yellow]⏹ Generation cancelled by user (Ctrl+C).[/bold yellow]")
 
     if stats:
         print_token_usage(stats)
@@ -147,7 +146,6 @@ def stream_response(generator: Generator[Tuple[str, Any], None, None], console_o
     return full_text, stats
 
 def print_token_usage(stats: Any):
-    """Print request statistics footer."""
     if not stats:
         return
     text = (
@@ -159,7 +157,6 @@ def print_token_usage(stats: Any):
     console.print(Panel(text, border_style="dim cyan", expand=False))
 
 def prompt_apply_patch(filepath: Path, original_code: str, new_code: str):
-    """Display diff and prompt user to apply changes to file."""
     if original_code.strip() == new_code.strip():
         console.print("[dim]No changes detected in suggested fix.[/dim]")
         return
@@ -176,15 +173,41 @@ def prompt_apply_patch(filepath: Path, original_code: str, new_code: str):
     console.print(Syntax(diff_text, "diff", theme="monokai", line_numbers=True))
 
     if Confirm.ask(f"\n[bold yellow]Apply this change to {filepath.name}?[/bold yellow]", default=False):
-        # Create backup file
         backup_path = filepath.with_suffix(filepath.suffix + ".bak")
         with open(backup_path, "w", encoding="utf-8") as f:
             f.write(original_code)
 
-        # Write new content
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(new_code)
 
         console.print(f"[bold green]✓ File updated successfully![/bold green] (Backup created at [dim]{backup_path.name}[/dim])")
     else:
         console.print("[dim]Patch skipped.[/dim]")
+
+def copy_to_clipboard(text: str) -> bool:
+    """Copy text to system clipboard."""
+    for tool in ["wl-copy", "xclip", "xsel", "pbcopy"]:
+        if shutil.which(tool):
+            try:
+                cmd = [tool]
+                if tool == "xclip":
+                    cmd.extend(["-selection", "clipboard"])
+                p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+                p.communicate(input=text.encode("utf-8"))
+                console.print("[bold green]✓ Output copied to system clipboard![/bold green]")
+                return True
+            except Exception:
+                pass
+    console.print("[bold yellow]! Clipboard utility not found (install wl-clipboard or xclip).[/bold yellow]")
+    return False
+
+def export_to_markdown(filepath: str, content: str):
+    """Export generated output to a Markdown file."""
+    path = Path(filepath).expanduser().resolve()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        console.print(f"[bold green]✓ Successfully exported output to:[bold white] {path}[/bold white]")
+    except Exception as e:
+        console.print(f"[bold red]Error exporting to {filepath}:[/bold red] {e}")

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "capture-help"
-version = "0.1.0"
-description = "A fast, modern terminal AI assistant powered by DeepSeek API"
+version = "1.0.0"
+description = "A fast, modern, project-aware terminal AI assistant powered by DeepSeek API"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [

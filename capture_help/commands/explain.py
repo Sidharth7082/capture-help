@@ -11,6 +11,8 @@ from capture_help.utils import (
     extract_log_summary,
     stream_response,
     render_project_badge,
+    copy_to_clipboard,
+    export_to_markdown,
 )
 
 console = Console()
@@ -38,12 +40,17 @@ Instructions:
 2. Breakdown key components, classes, and logic.
 3. Highlight notable patterns, design decisions, or external dependencies."""
 
-def explain_command(target: Optional[str] = None):
+def explain_command(
+    target: Optional[str] = None,
+    copy: bool = False,
+    export: Optional[str] = None,
+):
     """Explain a file or piped stdin build log in plain English."""
     content, path, name = read_stdin_or_file(target)
     print_header("Code & Log Explainer", f"Analyzing {name}")
 
     provider = get_provider()
+    full_output = ""
 
     if is_build_log(path, content):
         summary = extract_log_summary(content)
@@ -61,7 +68,7 @@ def explain_command(target: Optional[str] = None):
 
         prompt = EXPLAIN_LOG_PROMPT.format(content=content[:15_000])
         gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
-        stream_response(gen, console)
+        full_output, stats = stream_response(gen, console)
     else:
         render_project_badge()
         lang = path.suffix.lstrip(".") if path else "text"
@@ -69,4 +76,9 @@ def explain_command(target: Optional[str] = None):
 
         prompt = EXPLAIN_CODE_PROMPT.format(filename=name, language=lang, content=content[:20_000])
         gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
-        stream_response(gen, console)
+        full_output, stats = stream_response(gen, console)
+
+    if copy and full_output:
+        copy_to_clipboard(full_output)
+    if export and full_output:
+        export_to_markdown(export, full_output)

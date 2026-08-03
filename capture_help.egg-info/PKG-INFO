@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: capture-help
-Version: 0.1.0
-Summary: A fast, modern terminal AI assistant powered by DeepSeek API
+Version: 1.0.0
+Summary: A fast, modern, project-aware terminal AI assistant powered by DeepSeek API
 Author-email: Capture Team <capture@example.com>
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: MIT License
@@ -15,20 +15,30 @@ Requires-Dist: python-dotenv>=1.0.0
 
 # ⚡ capture-help
 
-> A fast, modern terminal AI assistant powered by the official DeepSeek API. Built with Python, Typer, Rich, and the OpenAI SDK.
+> A fast, modern, project-aware terminal AI assistant powered by the official DeepSeek API. Built with Python, Typer, Rich, and the OpenAI SDK.
 
 ---
 
-## 🌟 Features
+## 🚀 Key Features
 
-- **⚡ Fast Streaming**: Stream response tokens directly to your terminal in real-time.
-- **🎨 Rich Terminal UI**: Styled panels, project summaries, log metrics, and syntax highlighting.
-- **🔍 Smart Build Log Diagnosis**: Automatically detects compiler errors (gcc, clang, cmake, cargo, npm, python tracebacks) in build logs and explains root causes in plain English.
-- **📦 Executive Code Reviews**: Analyzes files or entire project directories with a visual summary table (languages, line counts, warnings, potential bugs, dead code).
-- **📝 Git Commit Generator**: Inspects `git diff` and generates conventional commit messages with copy-paste commands.
-- **🧪 Unit Test & Docs Generator**: Generates comprehensive unit tests and technical documentation.
-- **⚙️ Flexible Configuration**: Manages DeepSeek API key and endpoints via `.env`, environment variables, or interactive `capture-help config`.
-- **🔌 Extensible Architecture**: Modular provider interface (`BaseLLMProvider`) designed for easy addition of OpenAI, OpenRouter, or local LLMs.
+- **🧠 Project Intelligence & Codebase Questioning (`capture-help ask "<question>"`)**:
+  - Automatically detects Git repository root and project metadata (Languages, Build System, Frameworks).
+  - Indexes project files and matches relevant code snippets to answer codebase questions with exact file citations.
+- **🔀 Unix Stdin Pipe Support**:
+  - Seamlessly accepts stdin input:
+    - `make 2>&1 | capture-help explain`
+    - `cat error.log | capture-help explain`
+    - `git diff | capture-help review`
+    - `git diff | capture-help commit`
+- **🛠️ Interactive Diff Patching (`capture-help fix main.cpp`)**:
+  - Displays a clean syntax-highlighted diff (`a/file` vs `b/file`) and asks `Apply this change? (y/N)`.
+  - Automatically patches files and creates a `.bak` backup upon confirmation.
+- **⚡ Token Usage & Real-Time Cost Tracking**:
+  - Displays request generation time, input/output token counts, estimated cost ($0.14/1M input, $0.28/1M output), and model name.
+- **📜 Session History & Resuming (`capture-help history` / `capture-help resume <id>`)**:
+  - Persists chat conversations to disk. Resume prior sessions seamlessly.
+- **⚡ Shell Aliases (`capture-help alias --install`)**:
+  - Installs shell shortcuts (`ai`, `aiask`, `aifix`, `aireview`, `aidoc`, `aicommit`) into `~/.bashrc` or `~/.zshrc`.
 
 ---
 
@@ -75,37 +85,44 @@ DEFAULT_PROVIDER=deepseek
 
 | Command | Description |
 | :--- | :--- |
-| `capture-help chat` | Interactive AI terminal chat with conversation history. |
-| `capture-help explain <file|build.log>` | Explain source files or analyze compiler error logs in plain English. |
-| `capture-help fix <file>` | Identify bugs, logic errors, and anti-patterns with refactored code. |
-| `capture-help review <file|dir>` | Perform an automated code review with a visual Project Summary dashboard. |
-| `capture-help docs <file>` | Generate technical documentation and docstrings. |
-| `capture-help commit` | Read `git diff` and generate conventional commit messages. |
-| `capture-help test <file>` | Generate unit tests for pytest, catch2, cargo test, etc. |
-| `capture-help optimize <file>` | Analyze performance & memory bottlenecks with Big-O complexity. |
+| `capture-help ask "<question>"` | Ask a question about your entire codebase using automatic project indexing. |
+| `capture-help chat` | Interactive AI terminal chat with project context & session persistence. |
+| `capture-help explain [file|log]` | Explain source files or analyze compiler/build logs (or pipe via stdin). |
+| `capture-help fix [file]` | Identify bugs and apply fixes with interactive syntax-highlighted diff patching. |
+| `capture-help review [file|dir]` | Perform an automated code review with a visual Project Summary dashboard. |
+| `capture-help docs [file]` | Generate technical documentation and docstrings. |
+| `capture-help commit` | Read `git diff` or stdin and generate Conventional Commit messages. |
+| `capture-help test [file]` | Generate unit tests for pytest, catch2, cargo test, etc. |
+| `capture-help optimize [file]` | Analyze performance & memory bottlenecks with Big-O complexity. |
+| `capture-help alias [--install]` | Generate or install shell aliases (`ai`, `aifix`, `aireview`, `aidoc`, `aicommit`). |
+| `capture-help history` | List recent saved terminal chat sessions. |
+| `capture-help resume <id>` | Resume a previous chat session by ID or index number. |
 | `capture-help config` | View or update DeepSeek API key and base URL settings. |
 
 ---
 
-## 💡 Examples
+## 💡 Workflow Examples
 
-### 1. Smart Build Log Explanation
+### 1. Ask Codebase Questions
 ```bash
-capture-help explain build.log
+capture-help ask "Where is GlassEffect initialized?"
 ```
-Outputs a diagnostic summary table showing log lines, compiler error counts, and plain-English root causes with step-by-step fixes.
 
-### 2. Project Directory Code Review
+### 2. Pipe Build Logs
 ```bash
-capture-help review .
+make 2>&1 | capture-help explain
 ```
-Outputs a `📦 Project Summary` box showing language breakdowns, total files, and code volume alongside architectural recommendations.
 
-### 3. Git Commit Message Generator
+### 3. Interactive Diff Patching
 ```bash
-capture-help commit
+capture-help fix main.cpp
+# Output: Shows diff and asks: Apply this change to main.cpp? (y/N)
 ```
-Reads current staged or unstaged `git diff` and generates a clean `feat:` or `fix:` commit message.
+
+### 4. Code Review on Staged Git Diff
+```bash
+git diff --staged | capture-help review
+```
 
 ---
 

@@ -1,13 +1,46 @@
 from typing import Optional
 from rich.console import Console
 from rich.prompt import Prompt
-from rich.panel import Panel
 from rich.table import Table
 
 from capture_help.config import settings, save_config
 from capture_help.utils import print_header
 
 console = Console()
+
+AVAILABLE_MODELS = [
+    {"name": "deepseek-chat", "desc": "Standard general-purpose code & conversation model (Default)"},
+    {"name": "deepseek-reasoner", "desc": "DeepSeek-R1 reasoning model for complex architectural problems & debugging"},
+]
+
+def list_models_command():
+    """List available DeepSeek models."""
+    print_header("Model Selector", "Available DeepSeek Models")
+    
+    table = Table(title="🤖 Available Models", border_style="cyan", expand=True)
+    table.add_column("Model Name", style="bold yellow")
+    table.add_column("Active", style="bold green")
+    table.add_column("Description", style="white")
+
+    for m in AVAILABLE_MODELS:
+        active = "[bold green]✓ Active[/bold green]" if m["name"] == settings.deepseek_model else ""
+        table.add_row(m["name"], active, m["desc"])
+
+    console.print(table)
+    console.print("\n[dim]To switch active model, run:[bold white] capture-help model <model_name>[/bold white][/dim]")
+
+def set_model_command(model_name: str):
+    """Switch active DeepSeek model."""
+    valid_names = [m["name"] for m in AVAILABLE_MODELS]
+    if model_name not in valid_names:
+        console.print(f"[bold yellow]Warning:[/bold yellow] Custom model '[white]{model_name}[/white]' specified.")
+
+    save_config(
+        api_key=settings.deepseek_api_key,
+        base_url=settings.deepseek_base_url,
+        model=model_name
+    )
+    console.print(f"[bold green]✓ Switched active model to:[bold white] {model_name}[/bold white]")
 
 def config_command(
     key: Optional[str] = None,
@@ -26,7 +59,6 @@ def config_command(
         console.print(f"[bold green]✓ Configuration saved successfully to:[bold white] {cfg_path}[/bold white]")
         return
 
-    # Interactive configuration prompt if no flags supplied
     table = Table(title="Current Configuration", border_style="cyan", expand=True)
     table.add_column("Setting", style="bold cyan")
     table.add_column("Value", style="bold white")

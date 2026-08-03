@@ -10,6 +10,9 @@ from capture_help.utils import (
     read_stdin_or_file,
     stream_response,
     render_project_badge,
+    get_git_diff,
+    copy_to_clipboard,
+    export_to_markdown,
 )
 
 console = Console()
@@ -37,9 +40,40 @@ Instructions:
 2. Identify potential bugs, security issues, and dead code.
 3. Provide prioritized recommendations with checkmarks ✓."""
 
-def review_command(target: Optional[str] = None):
-    """Perform an automated code review on a file, directory, or piped git diff."""
-    # Check stdin first
+def review_command(
+    target: Optional[str] = None,
+    staged: bool = False,
+    ref: Optional[str] = None,
+    copy: bool = False,
+    export: Optional[str] = None,
+):
+    """Perform an automated code review on a file, directory, or git ref (--staged, HEAD~3, origin/main)."""
+    full_output = ""
+
+    # Check git ref / staged first
+    if staged or ref:
+        git_ref = "--staged" if staged else ref
+        diff_text = get_git_diff(git_ref)
+        if not diff_text:
+            console.print(f"[bold yellow]No git diff found for ref '{git_ref}'![/bold yellow]")
+            return
+
+        print_header("Automated Git Diff Review", f"Reviewing git diff ({git_ref})")
+        render_project_badge()
+
+        console.print(f"[bold cyan]Reviewing git diff '{git_ref}' ({len(diff_text.splitlines())} lines)...[/bold cyan]\n")
+        provider = get_provider()
+        prompt = DIFF_REVIEW_PROMPT.format(content=diff_text[:15_000])
+        gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
+        full_output, stats = stream_response(gen, console)
+
+        if copy and full_output:
+            copy_to_clipboard(full_output)
+        if export and full_output:
+            export_to_markdown(export, full_output)
+        return
+
+    # Check stdin pipe
     if not sys.stdin.isatty():
         content, _, name = read_stdin_or_file(None)
         print_header("Automated Diff Review", "Piped stdin git diff")
@@ -49,7 +83,12 @@ def review_command(target: Optional[str] = None):
         provider = get_provider()
         prompt = DIFF_REVIEW_PROMPT.format(content=content[:15_000])
         gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
-        stream_response(gen, console)
+        full_output, stats = stream_response(gen, console)
+
+        if copy and full_output:
+            copy_to_clipboard(full_output)
+        if export and full_output:
+            export_to_markdown(export, full_output)
         return
 
     if not target:
@@ -97,9 +136,14 @@ def review_command(target: Optional[str] = None):
             f"Instructions:\n1. Executive architectural review.\n2. Potential bugs & security smells.\n3. Prioritized recommendations with checkmarks ✓."
         )
         gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
-        stream_response(gen, console)
+        full_output, stats = stream_response(gen, console)
     else:
         lang = path.suffix.lstrip(".") if path else "text"
         prompt = FILE_REVIEW_PROMPT.format(filename=name, language=lang, content=content[:20_000])
         gen = provider.stream_completion(messages=[{"role": "user", "content": prompt}])
-        stream_response(gen, console)
+        full_output, stats = stream_response(gen, console)
+
+    if copy and full_output:
+        copy_to_clipboard(full_output)
+    if export and full_output:
+        export_to_markdown(export, full_output)

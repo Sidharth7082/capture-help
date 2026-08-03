@@ -11,7 +11,8 @@ from capture_help.commands.docs import docs_command
 from capture_help.commands.commit import commit_command
 from capture_help.commands.test import test_command
 from capture_help.commands.optimize import optimize_command
-from capture_help.commands.config_cmd import config_command
+from capture_help.commands.doctor import doctor_command
+from capture_help.commands.config_cmd import config_command, list_models_command, set_model_command
 from capture_help.commands.alias import alias_command
 from capture_help.commands.history_cmd import history_command, resume_command
 
@@ -43,12 +44,19 @@ def main(
     """
     pass
 
+@app.command("doctor")
+def doctor():
+    """Run environment, configuration, dependency, and API connectivity diagnostics."""
+    doctor_command()
+
 @app.command("ask")
 def ask(
-    question: str = typer.Argument(..., help="Question about your codebase (e.g. 'Where is GlassEffect initialized?').")
+    question: str = typer.Argument(..., help="Question about your codebase (e.g. 'Where is GlassEffect initialized?')."),
+    copy: bool = typer.Option(False, "--copy", "-c", help="Copy response to clipboard."),
+    export: Optional[str] = typer.Option(None, "--export", "-e", help="Export Markdown response to specified file."),
 ):
-    """Ask a question about the codebase with automatic project indexing and search."""
-    ask_command(question)
+    """Ask a question about the codebase with automatic project indexing and context size indicators."""
+    ask_command(question, copy=copy, export=export)
 
 @app.command("chat")
 def chat():
@@ -57,31 +65,41 @@ def chat():
 
 @app.command("explain")
 def explain(
-    filepath: Optional[str] = typer.Argument(None, help="Path to source file or build log (or pipe via stdin).")
+    filepath: Optional[str] = typer.Argument(None, help="Path to source file or build log (or pipe via stdin)."),
+    copy: bool = typer.Option(False, "--copy", "-c", help="Copy output to clipboard."),
+    export: Optional[str] = typer.Option(None, "--export", "-e", help="Export Markdown output to file."),
 ):
     """Explain a source file or compiler/build log in plain English."""
-    explain_command(filepath)
+    explain_command(filepath, copy=copy, export=export)
 
 @app.command("fix")
 def fix(
-    filepath: Optional[str] = typer.Argument(None, help="Path to source file (or pipe via stdin).")
+    filepath: Optional[str] = typer.Argument(None, help="Path to source file (or pipe via stdin)."),
+    copy: bool = typer.Option(False, "--copy", "-c", help="Copy fixed output to clipboard."),
+    export: Optional[str] = typer.Option(None, "--export", "-e", help="Export Markdown output to file."),
 ):
     """Analyze code and suggest fixes with interactive diff patching."""
-    fix_command(filepath)
+    fix_command(filepath, copy=copy, export=export)
 
 @app.command("review")
 def review(
-    target: Optional[str] = typer.Argument(None, help="Path to file/directory or pipe git diff via stdin.")
+    target: Optional[str] = typer.Argument(None, help="Path to file/directory or pipe git diff via stdin."),
+    staged: bool = typer.Option(False, "--staged", help="Review staged git changes (git diff --staged)."),
+    ref: Optional[str] = typer.Option(None, "--ref", "-r", help="Git ref to review (e.g. HEAD~3, origin/main)."),
+    copy: bool = typer.Option(False, "--copy", "-c", help="Copy review output to clipboard."),
+    export: Optional[str] = typer.Option(None, "--export", "-e", help="Export Markdown review to file."),
 ):
-    """Perform an automated code review on a file, directory, or piped git diff."""
-    review_command(target)
+    """Perform an automated code review on a file, directory, or git ref (--staged, HEAD~3, origin/main)."""
+    review_command(target, staged=staged, ref=ref, copy=copy, export=export)
 
 @app.command("docs")
 def docs(
-    filepath: Optional[str] = typer.Argument(None, help="Path to source file (or pipe via stdin).")
+    filepath: Optional[str] = typer.Argument(None, help="Path to source file (or pipe via stdin)."),
+    copy: bool = typer.Option(False, "--copy", "-c", help="Copy documentation to clipboard."),
+    export: Optional[str] = typer.Option(None, "--export", "-e", help="Export Markdown docs to file."),
 ):
     """Generate technical documentation and docstrings."""
-    docs_command(filepath)
+    docs_command(filepath, copy=copy, export=export)
 
 @app.command("commit")
 def commit():
@@ -121,14 +139,26 @@ def resume(
     """Resume a previous chat session by ID or index number."""
     resume_command(session_id)
 
+@app.command("models")
+def models():
+    """List available DeepSeek AI models."""
+    list_models_command()
+
+@app.command("model")
+def model(
+    model_name: str = typer.Argument(..., help="Model name to activate (e.g. deepseek-chat, deepseek-reasoner).")
+):
+    """Switch the active DeepSeek model."""
+    set_model_command(model_name)
+
 @app.command("config")
 def config(
     key: Optional[str] = typer.Option(None, "--key", "-k", help="DeepSeek API key."),
     base_url: Optional[str] = typer.Option(None, "--base-url", "-u", help="DeepSeek API base URL."),
-    model: Optional[str] = typer.Option(None, "--model", "-m", help="DeepSeek model name."),
+    model_name: Optional[str] = typer.Option(None, "--model", "-m", help="DeepSeek model name."),
 ):
     """Configure or view DeepSeek API credentials and settings."""
-    config_command(key=key, base_url=base_url, model=model)
+    config_command(key=key, base_url=base_url, model=model_name)
 
 if __name__ == "__main__":
     app()
