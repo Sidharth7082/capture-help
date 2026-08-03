@@ -6,6 +6,7 @@ capture_help/cli.py
 capture_help/config.py
 capture_help/deepseek.py
 capture_help/history.py
+capture_help/plugins.py
 capture_help/project.py
 capture_help/provider.py
 capture_help/utils.py
@@ -29,6 +30,9 @@ capture_help/commands/history_cmd.py
 capture_help/commands/hook.py
 capture_help/commands/index_cmd.py
 capture_help/commands/optimize.py
+capture_help/commands/plugin_cmd.py
 capture_help/commands/review.py
 capture_help/commands/test.py
+capture_help/commands/tui.py
 capture_help/providers/ollama.py
+tests/test_cli.py

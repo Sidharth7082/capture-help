@@ -17,10 +17,12 @@ from capture_help.commands.alias import alias_command
 from capture_help.commands.history_cmd import history_command, resume_command
 from capture_help.commands.hook import hook_command
 from capture_help.commands.index_cmd import index_command
+from capture_help.commands.plugin_cmd import plugin_command
+from capture_help.commands.tui import tui_command
 
 app = typer.Typer(
     name=__app_name__,
-    help="⚡ capture-help: A fast, modern terminal AI assistant powered by DeepSeek API.",
+    help="⚡ capture-help v2.0.0: A fast, modern terminal AI assistant powered by DeepSeek API.",
     add_completion=False,
     rich_markup_mode="rich",
 )
@@ -43,10 +45,23 @@ def main(
     )
 ):
     """
-    ⚡ capture-help CLI: AI-powered developer assistant in your Linux terminal.
+    ⚡ capture-help v2.0.0 CLI: AI-powered developer assistant in your Linux terminal.
     """
     if ctx.invoked_subcommand is None:
         chat_command()
+
+@app.command("tui")
+def tui():
+    """Launch interactive Rich Terminal User Interface dashboard."""
+    tui_command()
+
+@app.command("plugin")
+def plugin(
+    action: str = typer.Argument("list", help="Action: 'list', 'enable', 'disable'."),
+    name: Optional[str] = typer.Argument(None, help="Plugin name (e.g. qml-glassmorphism, python-fastapi).")
+):
+    """Manage domain-specific plugins and rule packages."""
+    plugin_command(action=action, plugin_name=name)
 
 @app.command("doctor")
 def doctor():
