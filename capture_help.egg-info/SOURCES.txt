@@ -1,6 +1,7 @@
 README.md
 pyproject.toml
 capture_help/__init__.py
+capture_help/agent.py
 capture_help/cli.py
 capture_help/config.py
 capture_help/deepseek.py
