@@ -26,7 +26,7 @@
 - [✨ Highlights & Overview](#-highlights--overview)
 - [🚀 Key Features](#-key-features)
 - [📦 Installation](#-installation)
-- [⚙️ Configuration & Environment](#️-configuration--environment)
+- [⚙️ Configuration & Environment](#-configuration--environment)
 - [📖 Detailed Command Reference](#-detailed-command-reference)
   - [🧠 Core & Codebase Intelligence](#1-core--codebase-intelligence)
   - [💻 System & DevOps Diagnostics](#2-system--devops-diagnostics)
@@ -34,7 +34,7 @@
   - [⚡ Productivity & Utilities](#4-productivity--utilities)
 - [💡 Workflow Examples](#-workflow-examples)
 - [🎭 Personas & Customization](#-personas--customization)
-- [⌨️ Shell Aliases](#️-shell-aliases)
+- [⌨️ Shell Aliases](#-shell-aliases)
 - [📜 License](#-license)
 
 ---
