@@ -152,6 +152,10 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
             else:
                 p = persona_mod.activate_persona(chosen.key)
                 console.print(f"[bold green]{persona_mod.render_banner(p)}[/bold green]")
+                if p.first_message:
+                    history.clear()
+                    history.append({"role": "assistant", "content": p.first_message})
+                    console.print(f"[bold magenta]💬 {p.display_name}:[/bold magenta] [italic]{p.first_message}[/italic]")
                 return True, None
 
         if arg.strip().isdigit():
@@ -163,6 +167,10 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
             elif 1 <= num <= len(personas):
                 p = persona_mod.activate_persona(personas[num - 1].name)
                 console.print(f"[bold green]{persona_mod.render_banner(p)}[/bold green]")
+                if p.first_message:
+                    history.clear()
+                    history.append({"role": "assistant", "content": p.first_message})
+                    console.print(f"[bold magenta]💬 {p.display_name}:[/bold magenta] [italic]{p.first_message}[/italic]")
                 return True, None
 
         if arg.strip() in ["reset", "default"]:
@@ -172,6 +180,10 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
             try:
                 p = persona_mod.activate_persona(arg.strip())
                 console.print(f"[bold green]{persona_mod.render_banner(p)}[/bold green]")
+                if p.first_message:
+                    history.clear()
+                    history.append({"role": "assistant", "content": p.first_message})
+                    console.print(f"[bold magenta]💬 {p.display_name}:[/bold magenta] [italic]{p.first_message}[/italic]")
             except persona_mod.PersonaError as e:
                 console.print(f"[bold red]{e}[/bold red]")
         return True, None
@@ -192,27 +204,27 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
         return True, None
 
     if sub in ["/gemma", "/gemma12b"]:
-        save_config(api_key=settings.deepseek_api_key, base_url="http://localhost:11434/v1", model="gemma3:12b", provider="ollama")
+        save_config(api_key=settings.deepseek_api_key, base_url="http://localhost:11434/v1", model="gemma3:12b", provider="ollama", keep_key=True)
         console.print("[bold green]🥇 Activated Google Gemma 3 12B Local Model! (FREE via Ollama)[/bold green]")
         return True, None
 
     if sub in ["/gemma27b"]:
-        save_config(api_key=settings.deepseek_api_key, base_url="http://localhost:11434/v1", model="gemma3:27b", provider="ollama")
+        save_config(api_key=settings.deepseek_api_key, base_url="http://localhost:11434/v1", model="gemma3:27b", provider="ollama", keep_key=True)
         console.print("[bold green]🥈 Activated Google Gemma 3 27B Local Model![/bold green]")
         return True, None
 
     if sub in ["/flash", "/cheap"]:
-        save_config(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com", model="deepseek-v4-flash", provider="deepseek")
+        save_config(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com", model="deepseek-v4-flash", provider="deepseek", keep_key=True)
         console.print("[bold green]⚡ Activated DeepSeek V4-Flash Model![/bold green]")
         return True, None
 
     if sub in ["/coder"]:
-        save_config(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com", model="deepseek-coder", provider="deepseek")
+        save_config(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com", model="deepseek-coder", provider="deepseek", keep_key=True)
         console.print("[bold green]💻 Activated DeepSeek Coder Model![/bold green]")
         return True, None
 
     if sub in ["/r1", "/reasoner"]:
-        save_config(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com", model="deepseek-reasoner", provider="deepseek")
+        save_config(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com", model="deepseek-reasoner", provider="deepseek", keep_key=True)
         console.print("[bold green]🧠 Activated DeepSeek Reasoner R1 Model![/bold green]")
         return True, None
 
@@ -355,6 +367,14 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
     if history:
         console.print(f"[dim]Loaded {len(history)} previous message(s).[/dim]")
 
+    # Character-card first message: seed a fresh chat with the persona's
+    # greeting as the opening assistant turn (JanitorAI / CharacterAI style).
+    from capture_help import persona as persona_mod
+    active_persona = persona_mod.get_active_persona()
+    if not history and active_persona is not None and active_persona.first_message:
+        history.append({"role": "assistant", "content": active_persona.first_message})
+        console.print(f"[bold magenta]💬 {active_persona.display_name}:[/bold magenta] [italic]{active_persona.first_message}[/italic]")
+
     if PROMPT_TOOLKIT_AVAILABLE:
         try:
             session = PromptSession(completer=SlashCompleter(), style=POPUP_STYLE)
@@ -413,15 +433,21 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
                 if current_prov == "deepseek" and (not settings.deepseek_api_key or len(settings.deepseek_api_key) < 10 or "test" in settings.deepseek_api_key.lower()):
                     console.print("\n[bold yellow]⚠️ DeepSeek API Key is invalid or not set.[/bold yellow]")
                     console.print("[bold green]🥇 Automatically switching to 100% FREE Local Google Gemma 3 12B (Ollama)![/bold green]\n")
-                    save_config(api_key="", provider="ollama", model="gemma3:12b")
+                    save_config(api_key="", provider="ollama", model="gemma3:12b", keep_key=True)
                     provider = get_provider()
                 gen = provider.stream_completion(messages=pruned_history, system_prompt=active_prompt)
                 assistant_reply, stats = stream_response(gen, console)
+            except SystemExit:
+                # Provider failure (already explained on screen). Keep the
+                # session alive instead of killing the whole chat.
+                console.print("[dim]Fix the provider issue above, then keep chatting.[/dim]")
+                history = history[:-1]
+                continue
             except Exception as e:
                 err_str = str(e)
                 if "401" in err_str or "Authentication" in err_str or "invalid" in err_str.lower():
                     console.print("\n[bold yellow]⚠️ DeepSeek API key authentication failed. Self-healing fallback to 100% FREE Local Google Gemma 3 12B (Ollama)...[/bold yellow]\n")
-                    save_config(api_key="", provider="ollama", model="gemma3:12b")
+                    save_config(api_key="", provider="ollama", model="gemma3:12b", keep_key=True)
                     provider = get_provider()
                     gen = provider.stream_completion(messages=pruned_history, system_prompt=active_prompt)
                     assistant_reply, stats = stream_response(gen, console)
@@ -459,7 +485,11 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
                 pruned_history_loop = history if ctx_limit <= 0 else history[-ctx_limit:]
 
                 gen_loop = provider.stream_completion(messages=pruned_history_loop, system_prompt=active_prompt)
-                curr_reply, stats_loop = stream_response(gen_loop, console)
+                try:
+                    curr_reply, stats_loop = stream_response(gen_loop, console)
+                except SystemExit:
+                    console.print("[dim]Tool-loop aborted due to a provider error (see above).[/dim]")
+                    break
                 if stats_loop:
                     render_cache_stats(stats_loop.cache_hit_tokens, stats_loop.prompt_tokens)
 

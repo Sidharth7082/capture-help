@@ -41,9 +41,18 @@ class Settings:
 settings = Settings()
 
 
-def save_config(api_key: str, base_url: Optional[str] = None, model: Optional[str] = None, provider: Optional[str] = None) -> Path:
-    """Save API configuration to ~/.config/capture-help/.env and update live process environment."""
+def save_config(api_key: str, base_url: Optional[str] = None, model: Optional[str] = None, provider: Optional[str] = None, keep_key: bool = False) -> Path:
+    """Save API configuration to ~/.config/capture-help/.env and update live process environment.
+
+    If keep_key is True and api_key is empty, the existing DEEPSEEK_API_KEY in the
+    environment is preserved rather than overwritten with an empty value. This lets
+    the chat's automatic local fallback switch providers without destroying the
+    user's configured DeepSeek API key.
+    """
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    if keep_key and not api_key:
+        api_key = os.getenv("DEEPSEEK_API_KEY", "")
 
     prov = provider if provider else settings.default_provider
     target_model = model if model else settings.deepseek_model

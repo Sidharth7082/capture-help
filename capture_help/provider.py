@@ -1,6 +1,15 @@
 from abc import ABC, abstractmethod
 from typing import Generator, List, Dict, Any, Optional
 
+
+class ProviderError(Exception):
+    """Raised when an LLM provider fails to produce a response.
+
+    Unlike a hard sys.exit, this lets callers (e.g. the interactive chat)
+    catch the failure and keep running instead of killing the session.
+    """
+
+
 class BaseLLMProvider(ABC):
     """Abstract Base Class for LLM Providers (DeepSeek, OpenAI, OpenRouter)."""
 

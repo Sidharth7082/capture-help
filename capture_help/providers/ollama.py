@@ -1,10 +1,9 @@
-import sys
 import time
 from typing import Generator, List, Dict, Optional, Tuple
 from openai import OpenAI, APIError, APIConnectionError
 from rich.console import Console
 
-from capture_help.provider import BaseLLMProvider
+from capture_help.provider import BaseLLMProvider, ProviderError
 from capture_help.deepseek import TokenUsageStats
 
 console = Console()
@@ -35,6 +34,18 @@ class OllamaProvider(BaseLLMProvider):
             return res.status_code == 200
         except Exception:
             return False
+
+    @staticmethod
+    def installed_models(timeout: float = 2.0) -> list:
+        """List model names currently installed in Ollama."""
+        try:
+            import httpx
+            res = httpx.get("http://localhost:11434/api/tags", timeout=timeout)
+            if res.status_code == 200:
+                return [m.get("name") for m in res.json().get("models", [])]
+        except Exception:
+            pass
+        return []
 
     def stream_completion(
         self,
@@ -78,10 +89,24 @@ class OllamaProvider(BaseLLMProvider):
 
         except APIConnectionError:
             console.print(f"\n[bold red]Local Ollama Error:[/bold red] Could not connect to Ollama server at {self.base_url}.\nMake sure Ollama is running (`ollama serve`).")
-            sys.exit(1)
+            raise ProviderError(f"Ollama server unreachable at {self.base_url}")
+        except APIError as e:
+            message = str(getattr(e, "message", "") or e)
+            if "not found" in message.lower() and "model" in message.lower():
+                installed = ", ".join(OllamaProvider.installed_models()) or "(none)"
+                console.print(
+                    f"\n[bold red]Model '{self.model}' is not installed in Ollama.[/bold red]\n"
+                    f"[bold cyan]Installed models:[/bold cyan] [bold white]{installed}[/bold white]\n"
+                    f"[bold yellow]Fix:[/bold yellow] run [bold white]capture-help local use <model>[/bold white] "
+                    f"(e.g. [bold white]capture-help local use gemma3:12b[/bold white])\n"
+                    f"      or pull it with [bold white]ollama pull {self.model}[/bold white]"
+                )
+                raise ProviderError(f"model '{self.model}' not installed locally")
+            console.print(f"\n[bold red]Ollama Error:[/bold red] {message}")
+            raise ProviderError(message)
         except Exception as e:
             console.print(f"\n[bold red]Ollama Error:[/bold red] {str(e)}")
-            sys.exit(1)
+            raise ProviderError(str(e))
 
     def completion(
         self,

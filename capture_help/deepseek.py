@@ -7,7 +7,7 @@ from openai import OpenAI, APIError, APIConnectionError
 from rich.console import Console
 
 from capture_help.config import settings
-from capture_help.provider import BaseLLMProvider
+from capture_help.provider import BaseLLMProvider, ProviderError
 
 console = Console()
 
@@ -28,6 +28,13 @@ DEEPSEEK_MODELS = {
         "input_cost_per_m": 0.07,
         "output_cost_per_m": 0.14,
         "cache_cost_per_m": 0.014,
+    },
+    "deepseek-v4-pro": {
+        "name": "DeepSeek V4-Pro",
+        "description": "Flagship DeepSeek V4 Pro model (higher quality, higher cost)",
+        "input_cost_per_m": 0.55,
+        "output_cost_per_m": 2.19,
+        "cache_cost_per_m": 0.14,
     },
     "deepseek-chat": {
         "name": "DeepSeek Chat (V3)",
@@ -158,13 +165,13 @@ class DeepSeekProvider(BaseLLMProvider):
 
         except APIConnectionError:
             console.print("\n[bold red]Network Error:[/bold red] Could not connect to API at " + self.base_url)
-            sys.exit(1)
+            raise ProviderError(f"could not connect to {self.base_url}")
         except APIError as e:
             console.print(f"\n[bold red]API Error:[/bold red] {e.message}")
-            sys.exit(1)
+            raise ProviderError(getattr(e, "message", "") or str(e))
         except Exception as e:
             console.print(f"\n[bold red]Unexpected Error:[/bold red] {str(e)}")
-            sys.exit(1)
+            raise ProviderError(str(e))
 
     def completion(
         self,

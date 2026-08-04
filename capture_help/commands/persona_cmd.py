@@ -43,6 +43,27 @@ BUILTIN_TEMPLATES = {
             "- Ask clarifying questions only when they materially change the design."
         ),
     },
+    "roleplay": {
+        "display_name": "Unrestricted Roleplay",
+        "description": "Immersive character roleplay, like JanitorAI/CharacterAI: stay in character, never break with disclaimers.",
+        "greeting": "The scene is set. Where shall we begin?",
+        "first_message": "The scene is set. Where shall we begin?",
+        "tags": ["roleplay", "fiction", "immersive"],
+        "personality": "A vivid, emotionally present fictional character with a strong voice and clear desires. Fully immersed in the story, never breaks the fourth wall.",
+        "scenario": "An interactive fiction between two adults. The user directs the scene; the character responds in voice, action, and feeling.",
+        "post_history_instructions": "Stay in character. Never output assistant disclaimers ('I am an AI', 'I can't do that') mid-roleplay. If the scene goes mature, continue naturally and tastefully as the character.",
+        "system_prompt": "",
+        "example_dialogs": [
+            {
+                "user": "The candlelight flickers between us. You seem distracted tonight.",
+                "assistant": "(She traces the rim of her glass, a slow smile forming) Distracted? No. Sizing you up, maybe. There's a difference."
+            },
+            {
+                "user": "What are you thinking about?",
+                "assistant": "(She leans in, voice dropping to a murmur) Honestly? How long before you stop asking questions and start doing something about that look on your face."
+            }
+        ],
+    },
 }
 
 
@@ -78,15 +99,27 @@ def persona_show_command(name: str):
         console.print(f"[bold red]{e}[/bold red]")
         raise typer.Exit(1)
 
-    print_header(f"Persona: {p.display_name}")
+    print_header(f"Character Card: {p.display_name}")
     console.print(f"[bold yellow]Name:[/bold yellow] {p.name}")
     console.print(f"[bold yellow]Display:[/bold yellow] {p.display_name}")
-    console.print(f"[bold yellow]Description:[/bold yellow] {p.description}")
-    console.print(f"[bold yellow]Greeting:[/bold yellow] {p.greeting}")
+    if p.description:
+        console.print(f"[bold yellow]Description:[/bold yellow] {p.description}")
+    if p.personality:
+        console.print(f"\n[bold yellow]Personality:[/bold yellow]\n{p.personality}")
+    if p.scenario:
+        console.print(f"\n[bold yellow]Scenario:[/bold yellow]\n{p.scenario}")
+    if p.first_message or p.greeting:
+        console.print(f"\n[bold yellow]First Message:[/bold yellow] {p.first_message}")
+    if p.post_history_instructions:
+        console.print(f"\n[bold yellow]Post-History Instructions:[/bold yellow]\n{p.post_history_instructions}")
     if p.tags:
-        console.print(f"[bold yellow]Tags:[/bold yellow] {', '.join(p.tags)}")
-    console.print("\n[bold yellow]System Prompt:[/bold yellow]\n")
-    console.print(p.system_prompt)
+        console.print(f"\n[bold yellow]Tags:[/bold yellow] {', '.join(p.tags)}")
+    if p.system_prompt:
+        console.print("\n[bold yellow]System Prompt:[/bold yellow]\n")
+        console.print(p.system_prompt)
+    if p.example_dialogs:
+        console.print("\n[bold yellow]Example Dialogues:[/bold yellow]\n")
+        console.print(persona_mod.format_example_dialogs(p.example_dialogs))
 
 
 def persona_templates_command():
@@ -120,23 +153,40 @@ def persona_create_command(
         if not data:
             console.print(f"[bold red]Error:[/bold red] Unknown template '{template}'. Run 'persona templates' for options.")
             raise typer.Exit(1)
-        system_prompt = data["system_prompt"]
+        system_prompt = data.get("system_prompt", "")
         display_name = data["display_name"]
         description = data["description"]
         greeting = data["greeting"]
         tags = data["tags"]
+        personality = data.get("personality", "")
+        scenario = data.get("scenario", "")
+        example_dialogs = data.get("example_dialogs", [])
+        first_message = data.get("first_message", greeting)
+        post_history = data.get("post_history_instructions", "")
         console.print(f"[bold cyan]Starting from template '{template}'.[/bold cyan] "
-                      "You can edit the prompt with 'persona edit' afterwards.\n")
+                      "You can edit the card with 'persona edit' afterwards.\n")
     else:
-        system_prompt = _read_multiline("System prompt (multi-line; press Ctrl+D on an empty line to finish):")
+        console.print("\n[bold cyan]Character Card Builder[/bold cyan] (Ctrl+D on an empty line to finish each field)")
         display_name = typer.prompt("Display name", default=name)
         description = typer.prompt("Short description", default="")
-        greeting = typer.prompt("Greeting line", default="")
+        personality = _read_multiline("Personality (how the character behaves and feels):")
+        scenario = _read_multiline("Scenario / world context (where the scene takes place):")
+        greeting = _read_multiline("First message (the character's opening line):")
+        first_message = greeting or typer.prompt("First message", default=greeting)
+        post_history = _read_multiline("Post-history instructions (optional reminders):")
         tags_raw = typer.prompt("Comma-separated tags", default="")
         tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+        example_dialogs = []
+        while True:
+            ex = _read_multiline("Example dialogue (or leave empty to finish):")
+            if not ex.strip():
+                break
+            example_dialogs.append(ex.strip())
+        system_prompt = ""
 
-    if not system_prompt.strip():
-        console.print("[bold red]Error:[/bold red] System prompt cannot be empty.")
+    if not system_prompt.strip() and not (personality.strip() or scenario.strip() or example_dialogs):
+        console.print("[bold red]Error:[/bold red] Provide a system prompt or at least one "
+                      "structured field (personality, scenario, example_dialogs).")
         raise typer.Exit(1)
 
     persona_mod._ensure_dirs()
@@ -144,12 +194,17 @@ def persona_create_command(
         "name": name,
         "display_name": display_name,
         "description": description,
+        "personality": personality,
+        "scenario": scenario,
         "greeting": greeting,
+        "first_message": first_message,
+        "post_history_instructions": post_history,
+        "example_dialogs": example_dialogs,
         "tags": tags,
         "system_prompt": system_prompt.strip(),
     }, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    console.print(f"[bold green]✓ Persona '{name}' created![/bold green] Activate it with "
+    console.print(f"[bold green]✓ Character '{name}' created![/bold green] Activate it with "
                   f"[bold white]capture-help persona activate {name}[/bold white].")
 
 
@@ -172,12 +227,23 @@ def persona_edit_command(name: str):
             pass
     console.print(f"[bold yellow]No $EDITOR set. Editing interactively...[/bold yellow]")
     p = persona_mod.get_persona(name)
-    new_prompt = _read_multiline(f"System prompt for '{name}' (current prompt shown above; Ctrl+D to finish):")
-    if new_prompt.strip():
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data["system_prompt"] = new_prompt.strip()
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        console.print(f"[bold green]✓ Updated system prompt for '{name}'.[/bold green]")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    console.print("\n[bold cyan]Editing Character Card fields[/bold cyan] (Ctrl+D on an empty line to finish; empty = keep current)")
+    for field, label in [
+        ("description", "Short description"),
+        ("personality", "Personality"),
+        ("scenario", "Scenario / world context"),
+        ("first_message", "First message"),
+        ("post_history_instructions", "Post-history instructions"),
+    ]:
+        current = data.get(field, "")
+        if current:
+            console.print(f"[dim]Current {label}:[/dim] {current[:120]}{'...' if len(current) > 120 else ''}")
+        new_val = _read_multiline(f"{label}:")
+        if new_val.strip():
+            data[field] = new_val.strip()
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    console.print(f"[bold green]✓ Updated character card for '{name}'.[/bold green]")
 
 
 def persona_activate_command(name: str):

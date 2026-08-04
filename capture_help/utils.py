@@ -126,6 +126,8 @@ def get_git_diff(ref: Optional[str] = None) -> str:
 
 def stream_response(generator: Generator[Tuple[str, Any], None, None], console_obj: Optional[Console] = None) -> Tuple[str, Any]:
     """Stream LLM response with real-time Rich Markdown rendering and Ctrl+C cancellation."""
+    from capture_help.provider import ProviderError
+
     con = console_obj or console
     full_text = ""
     stats = None
@@ -138,6 +140,10 @@ def stream_response(generator: Generator[Tuple[str, Any], None, None], console_o
                     live.update(Markdown(full_text))
                 if usage_stats:
                     stats = usage_stats
+    except ProviderError:
+        # Provider already printed a friendly message; exit cleanly for
+        # one-shot commands instead of surfacing a raw traceback.
+        raise SystemExit(1)
     except KeyboardInterrupt:
         con.print("\n[bold yellow]⏹ Generation cancelled by user (Ctrl+C).[/bold yellow]")
 

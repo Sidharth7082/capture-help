@@ -305,7 +305,18 @@ def test_060_graph_cmd():
     res = runner.invoke(app, ["graph"])
     assert res.exit_code == 0
 
-def test_061_guard_cmd():
+def test_061_guard_cmd(monkeypatch):
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "pytest":
+            return FakeResult()
+        raise FileNotFoundError
+
+    monkeypatch.setattr("subprocess.run", fake_run)
     res = runner.invoke(app, ["guard"])
     assert res.exit_code == 0
 
