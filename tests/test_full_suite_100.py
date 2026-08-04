@@ -321,9 +321,43 @@ def test_064_local_list_cmd():
     res = runner.invoke(app, ["local", "list"])
     assert res.exit_code == 0
 
-# Generate remaining tests to reach 100+ tests
-for i in range(65, 105):
-    exec(f"""
-def test_{i:03d}_generated_suite_pass():
-    assert True
-""")
+def test_065_summarize_help_cmd():
+    res = runner.invoke(app, ["summarize", "--help"])
+    assert res.exit_code == 0
+    assert "summarize" in res.output
+
+CORE_COMMANDS = [
+    "ask", "chat", "index", "explain", "fix", "review", "docs", "commit",
+    "test", "optimize", "alias", "history", "resume", "models", "config",
+    "gpu", "ensemble", "redact", "update", "graph", "guard", "scan", "virus",
+    "docker", "disk", "firewall", "neofetch", "table", "profile", "skills",
+    "pr", "audit", "diagram", "script", "clean", "changelog", "benchmark",
+    "refactor", "secrets", "translate", "stats", "web", "team", "tui",
+    "plugin", "doctor", "summarize",
+]
+
+def test_066_all_core_commands_registered():
+    names = {c.name for c in app.registered_commands}
+    missing = [c for c in CORE_COMMANDS if c not in names]
+    assert not missing, f"Commands missing from CLI: {missing}"
+
+def test_067_sub_typers_registered():
+    names = {group.name for group in app.registered_groups}
+    for group in ["local", "arch", "memory", "learn", "hermes"]:
+        assert group in names, f"Sub-command group '{group}' not registered"
+
+def test_068_all_core_command_helps_exit_zero():
+    for cmd in CORE_COMMANDS:
+        res = runner.invoke(app, [cmd, "--help"])
+        assert res.exit_code == 0, f"'{cmd} --help' failed: {res.output[:200]}"
+
+def test_069_version_flag_matches_module():
+    from capture_help import __version__
+    res = runner.invoke(app, ["--version"])
+    assert res.exit_code == 0
+    assert __version__ in res.stdout
+
+def test_070_no_command_invokes_chat_header():
+    res = runner.invoke(app, [])
+    assert res.exit_code == 0
+    assert "chat" in res.output.lower() or "capture-help" in res.output

@@ -172,6 +172,7 @@ CAPTURE_HELP_REDACT_SECRETS=true
 | `gpu` | NVIDIA / VRAM hardware detection and load metrics. | `capture-help gpu` |
 | `firewall` | Network rule evaluation & firewall health audit (`ufw`, `iptables`). | `capture-help firewall` |
 | `tui` | Interactive TUI file picker & command selector console. | `capture-help tui` |
+| `local` | Manage local Ollama models: `list`, `pull`, `use <model>`. | `capture-help local use qwen2.5-coder` |
 
 ---
 
@@ -192,6 +193,7 @@ CAPTURE_HELP_REDACT_SECRETS=true
 | Command | Description | Example Usage |
 | :--- | :--- | :--- |
 | `commit` | Generate Conventional Commit messages from staged `git diff`. | `git diff --staged \| capture-help commit` |
+| `summarize` | Condense git diffs, files, directories, or piped stdin into concise key takeaways. | `git diff HEAD~3 \| capture-help summarize` |
 | `pr` | Draft Pull Request title & description based on commit logs. | `capture-help pr` |
 | `changelog` | Automatically aggregate git history into `CHANGELOG.md`. | `capture-help changelog` |
 | `history` | List and browse past chat sessions. | `capture-help history` |
@@ -200,6 +202,7 @@ CAPTURE_HELP_REDACT_SECRETS=true
 | `doctor` | Self-diagnostic tool to check python env, dependencies, and API keys. | `capture-help doctor` |
 | `clean` | Purge cached indices, temporary diffs, and session logs. | `capture-help clean` |
 | `stats` | View total token consumption, total requests, and total cost metrics. | `capture-help stats` |
+| `web` | Live web search (DuckDuckGo) with AI-grounded answers & cited sources. | `capture-help web "httpx vs requests"` |
 
 ---
 
@@ -245,19 +248,80 @@ capture-help commit
 *Generates:*
 `feat(cli): add interactive TUI selector and system diagnostic commands`
 
+### 5. Instant Content Summaries
+```bash
+# Summarize your uncommitted work
+capture-help summarize
+
+# Summarize the last 3 commits of changes
+capture-help summarize --ref HEAD~3
+
+# Summarize a whole module
+capture-help summarize capture_help/commands
+
+# Summarize any piped output (logs, test runs, CI output)
+make 2>&1 | capture-help summarize
+```
+
+### 6. Run Fully Offline with Local Ollama Models
+Every command (including `summarize`) can run against local Ollama models instead of the cloud API — no API key needed:
+
+```bash
+# Activate any installed local model globally (auto-detects your Ollama server)
+capture-help local use qwen2.5-coder:14b
+
+# Or switch provider manually
+capture-help config --provider ollama --model qwen2.5-coder:14b
+
+# Force a single summarize command onto a local model
+capture-help summarize --local --model gemma3:12b
+
+# Switch back to cloud DeepSeek
+capture-help config --provider deepseek --model deepseek-chat
+```
+
+`DEFAULT_PROVIDER=ollama` (or any model name with an Ollama tag like `gemma3:12b`, or a localhost base URL) automatically routes all commands to `http://localhost:11434/v1`.
+
 ---
 
 ## 🎭 Personas & Customization
 
-`capture-help` includes dynamic system personas to match your preferred workflow tone:
+`capture-help` ships with dynamic character personas you can switch between, plus a full CLI to create your own. A persona is just a system-prompt overlay — **you fully control its behavior, tone, and rules**; capture-help does not inject any content restrictions into personas you create.
 
-- **default**: Balanced, clear, helpful developer assistant.
+Built-in templates (start with `capture-help persona create <name> --template <t>`):
+
 - **aggressive**: Highly concise, brutal efficiency, zero fluff, direct code focus.
 - **senior**: Senior Architect perspective emphasizing design patterns, edge cases, and scalability.
 
-Set your persona globally or via command-line flags:
+Manage personas from the CLI:
+```bash
+capture-help persona list                          # show installed + active
+capture-help persona templates                     # list built-in templates
+capture-help persona create mybot --template aggressive   # start from a template
+capture-help persona create mybot                  # fully interactive, free-form system prompt
+capture-help persona activate mybot                # apply to all sessions
+capture-help persona show mybot                    # view the full definition
+capture-help persona edit mybot                    # tweak the system prompt in $EDITOR
+capture-help persona export mybot --out mybot.json # share / back up
+capture-help persona import mybot.json
+capture-help persona delete mybot
+capture-help persona reset                         # back to default assistant
+```
+
+Set a persona for a single chat session:
 ```bash
 capture-help chat --persona aggressive
+```
+
+Within chat, use `/persona` to switch live (`/persona gehrman`, `/persona 1`, `/persona reset`).
+
+### Longer, Uninterrupted Answers
+
+capture-help no longer truncates your conversation to a tiny fixed window. The context is configurable:
+
+```bash
+CAPTURE_HELP_CONTEXT_MESSAGES=0 capture-help chat   # unlimited context (whole conversation)
+CAPTURE_HELP_CONTEXT_MESSAGES=50 capture-help chat  # or a larger fixed window (default 30)
 ```
 
 ---

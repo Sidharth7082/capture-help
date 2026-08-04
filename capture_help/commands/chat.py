@@ -102,16 +102,6 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
     sub = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ""
 
-    if sub == "/gemma":
-        save_config(
-            api_key=settings.deepseek_api_key or "ollama",
-            base_url="http://localhost:11434/v1",
-            model="gemma3:12b",
-            provider="ollama",
-        )
-        console.print("[bold green]🥇 Activated Google Gemma 3 12B (Q4) Local Model![/bold green] (FREE via Ollama http://localhost:11434)")
-        return True, None
-
     if sub in ["/scan", "/virus"]:
         from capture_help.commands.scan import scan_command
         scan_command()
@@ -302,7 +292,7 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
             return True, None
         content = agent_read_file(arg)
         console.print(f"[bold green]✓ File '{arg}' loaded into context.[/bold green]")
-        history.append({"role": "user", "content": f"File content '{arg}':\n{content[:4000]}"})
+        history.append({"role": "user", "content": f"File content '{arg}':\n{content[:30_000]}"})
         return True, "File loaded into context."
 
     if sub == "/run":
@@ -311,7 +301,7 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
             return True, None
         out = agent_run_command(arg)
         console.print(f"[bold cyan]Command Output:[/bold cyan]\n{out}")
-        history.append({"role": "user", "content": f"Terminal output of `{arg}`:\n{out[:3000]}"})
+        history.append({"role": "user", "content": f"Terminal output of `{arg}`:\n{out[:20_000]}"})
         return True, "Command output added."
 
     if sub == "/search":
@@ -320,7 +310,7 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
             return True, None
         results = agent_search_codebase(arg)
         console.print(f"[bold cyan]Search Results:[/bold cyan]\n{results}")
-        history.append({"role": "user", "content": f"Search results for '{arg}':\n{results[:3000]}"})
+        history.append({"role": "user", "content": f"Search results for '{arg}':\n{results[:20_000]}"})
         return True, "Search results added."
 
     if sub == "/diff":
@@ -329,7 +319,7 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
             console.print("[bold yellow]No git diff detected.[/bold yellow]")
         else:
             console.print(f"[bold cyan]Git Diff ({len(diff.splitlines())} lines)[/bold cyan]")
-            history.append({"role": "user", "content": f"Git diff:\n```diff\n{diff[:4000]}\n```"})
+            history.append({"role": "user", "content": f"Git diff:\n```diff\n{diff[:20_000]}\n```"})
         return True, "Diff added."
 
     if sub in ["/help", "help"]:
@@ -403,10 +393,17 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
                     continue
 
             history.append({"role": "user", "content": user_input})
-            
-            # Sliding Context Window (keep last 6 messages)
-            pruned_history = history[-6:]
-            
+
+            # Sliding context window. Configurable via CAPTURE_HELP_CONTEXT_MESSAGES;
+            # defaults to a generous window instead of a hard-coded 6 messages.
+            # Set to 0 for unlimited context (the whole conversation).
+            import os as _os
+            try:
+                ctx_limit = int(_os.getenv("CAPTURE_HELP_CONTEXT_MESSAGES", "30"))
+            except ValueError:
+                ctx_limit = 30
+            pruned_history = history if ctx_limit <= 0 else history[-ctx_limit:]
+
             from capture_help.persona import build_system_prompt
             active_prompt = build_system_prompt(cached_system_prompt)
 
@@ -458,8 +455,8 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
 
                 console.print(f"\n[bold cyan]🔄 [Turn {turn_count}/{max_tool_turns}] Continuing Autonomous Task Execution...[/bold cyan]")
 
-                history.append({"role": "user", "content": f"Tool Output:\n{tool_out[:2500]}"})
-                pruned_history_loop = history[-6:]
+                history.append({"role": "user", "content": f"Tool Output:\n{tool_out[:20_000]}"})
+                pruned_history_loop = history if ctx_limit <= 0 else history[-ctx_limit:]
 
                 gen_loop = provider.stream_completion(messages=pruned_history_loop, system_prompt=active_prompt)
                 curr_reply, stats_loop = stream_response(gen_loop, console)

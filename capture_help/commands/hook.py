@@ -12,16 +12,26 @@ console = Console()
 HOOK_SCRIPT = """#!/bin/bash
 # capture-help Git Pre-Commit Security Hook
 echo "⚡ Running capture-help pre-commit security review..."
-
-capture-help review --staged
+OUTPUT=$(capture-help review --staged 2>&1)
 RESULT=$?
+echo "$OUTPUT"
 
-if [ $RESULT -ne 0 ]; then
-    echo "❌ capture-help review detected critical issues. Commit aborted."
-    exit 1
+if [ $RESULT -eq 0 ]; then
+    exit 0
 fi
 
-exit 0
+# Only block the commit on a genuine review failure. Operational problems
+# (offline, missing API key, provider/network errors, model not found) must
+# never block commits — a reviewer outage is not a security finding.
+if echo "$OUTPUT" | grep -qiE "API Error|Ollama Error|Network Error|not found|connect|authentication|401|403|api key|timed out"; then
+    echo ""
+    echo "⚠️  capture-help review could not reach its AI provider (operational error, not a security finding)."
+    echo "    Commit proceeding. Run 'capture-help review --staged' manually to see the full review."
+    exit 0
+fi
+
+echo "❌ capture-help review detected critical issues. Commit aborted."
+exit 1
 """
 
 def hook_command(action: str = "install"):

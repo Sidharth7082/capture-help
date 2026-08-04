@@ -68,11 +68,12 @@ def config_command(
 
     if key or base_url or model_name or provider:
         new_key = key if key else settings.deepseek_api_key
-        new_url = base_url if base_url else settings.deepseek_base_url
         new_model = model_name if model_name else settings.deepseek_model
         new_provider = provider if provider else settings.default_provider
 
-        save_config(api_key=new_key, base_url=new_url, model=new_model, provider=new_provider)
+        # Passing base_url=None lets save_config apply provider-aware defaults
+        # (e.g. localhost:11434/v1 when switching to ollama).
+        save_config(api_key=new_key, base_url=base_url, model=new_model, provider=new_provider)
         console.print("[bold green]✓ Settings updated successfully![/bold green]")
 
     table = Table(title="⚙️ Current Configuration", border_style="cyan")

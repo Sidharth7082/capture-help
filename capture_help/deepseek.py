@@ -182,6 +182,25 @@ class DeepSeekProvider(BaseLLMProvider):
         return "".join(text_chunks), final_stats
 
 def get_provider(model: Optional[str] = None) -> BaseLLMProvider:
+    """Return the configured provider.
+
+    Respects DEFAULT_PROVIDER (deepseek | ollama) so every command can run
+    against local Ollama models. Also treats Ollama-tagged models
+    (e.g. "qwen2.5-coder:14b", "gemma3:12b") and localhost base URLs as local.
+    """
+    from capture_help.providers.ollama import OllamaProvider
+
+    target_model = (model or settings.deepseek_model).lower()
+    base = settings.deepseek_base_url.lower()
+    is_local = (
+        settings.default_provider == "ollama"
+        or ":" in target_model
+        or "localhost" in base
+        or "127.0.0.1" in base
+        or "11434" in base
+    )
+    if is_local:
+        return OllamaProvider(model=model or settings.deepseek_model, base_url=settings.deepseek_base_url)
     return DeepSeekProvider(model=model)
 
 def ask_deepseek(prompt: str, system_prompt: Optional[str] = None, model: Optional[str] = None) -> str:

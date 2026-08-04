@@ -2,6 +2,7 @@ import typer
 from typing import Optional
 
 from capture_help import __version__, __app_name__
+from capture_help.commands.persona_cmd import register_persona_app
 from capture_help.commands.chat import chat_command
 from capture_help.commands.ask import ask_command
 from capture_help.commands.explain import explain_command
@@ -48,6 +49,7 @@ from capture_help.commands.neofetch import neofetch_command
 from capture_help.commands.table_cmd import table_command
 from capture_help.commands.memory_cmd import app as memory_app
 from capture_help.commands.profile import profile_command
+from capture_help.commands.summarize import summarize_command
 from capture_help.commands.hermes import app as hermes_app
 
 app = typer.Typer(
@@ -198,8 +200,30 @@ def ask(
     ask_command(question, copy=copy, export=export)
 
 @app.command("chat")
-def chat():
+def chat(
+    persona: Optional[str] = typer.Option(None, "--persona", "-p", help="Activate a persona for this session (e.g. aggressive, senior, or any created persona)."),
+    resume: Optional[str] = typer.Option(None, "--resume", "-r", help="Resume a previous session by ID."),
+):
     """Start an interactive AI chat session in the terminal."""
+    if persona:
+        from capture_help.persona import activate_persona
+        try:
+            p = activate_persona(persona)
+            from rich.console import Console as RichConsole
+            RichConsole().print(f"[bold green]{p.display_name}[/bold green] persona active for this session.")
+        except Exception as e:
+            from rich.console import Console as RichConsole
+            RichConsole().print(f"[bold red]{e}[/bold red]")
+            raise typer.Exit(1)
+    if resume:
+        from capture_help.history import load_session
+        data = load_session(resume)
+        if data and data.get("messages"):
+            chat_command(initial_messages=data["messages"], session_id=str(data.get("id", resume)))
+            return
+        else:
+            from rich.console import Console as RichConsole
+            RichConsole().print(f"[bold yellow]No session found with id '{resume}'.[/bold yellow]")
     chat_command()
 
 @app.command("index")
@@ -257,6 +281,18 @@ def commit():
     """Read git diff or stdin and generate a Conventional Commit message."""
     commit_command()
 
+@app.command("summarize")
+def summarize(
+    target: Optional[str] = typer.Argument(None, help="File, directory, or git ref path to summarize (or pipe via stdin)."),
+    ref: Optional[str] = typer.Option(None, "--ref", "-r", help="Git ref to summarize (e.g. HEAD~3, origin/main)."),
+    local: bool = typer.Option(False, "--local", "-l", help="Run on a local Ollama model instead of the cloud API."),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model to use (e.g. qwen2.5-coder:14b)."),
+    copy: bool = typer.Option(False, "--copy", "-c", help="Copy summary to clipboard."),
+    export: Optional[str] = typer.Option(None, "--export", "-e", help="Export summary to markdown file."),
+):
+    """Summarize git changes, source files, directories, or piped stdin into key takeaways."""
+    summarize_command(target, ref=ref, local=local, model=model, copy=copy, export=export)
+
 @app.command("test")
 def test(
     filepath: Optional[str] = typer.Argument(None, help="Path to source file (or pipe via stdin).")
@@ -310,9 +346,12 @@ def config(
     provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Provider name (deepseek, ollama)."),
 ):
     """Configure or view DeepSeek / Ollama API credentials and settings."""
-    config_command(key=key, base_url=base_url, model=model_name)
+    config_command(key=key, base_url=base_url, model_name=model_name, provider=provider)
 
 app.add_typer(local_app, name="local", help="Manage local Ollama models and local AI engine.")
+persona_app = typer.Typer(name="persona", help="Manage character personas (create, activate, delete, export, import).")
+register_persona_app(persona_app)
+app.add_typer(persona_app)
 app.add_typer(arch_app, name="arch", help="Arch Linux power-user tools (Pacman, AUR, Systemd, Mirrors).")
 app.add_typer(memory_app, name="memory", help="Manage background learned rules and user memory preferences.")
 app.add_typer(memory_app, name="learn", help="Alias for 'memory': Teach capture-help new background rules.")

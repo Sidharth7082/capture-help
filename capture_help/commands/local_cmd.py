@@ -44,3 +44,18 @@ def pull_model(model_name: str = typer.Argument("gemma3:12b", help="Model name t
         console.print(f"[bold green]✓ Successfully pulled '{model_name}'![/bold green]")
     except Exception as e:
         console.print(f"[red]Failed to pull model '{model_name}': {e}[/red]")
+
+@app.command("use")
+def use_local_model(model_name: str = typer.Argument(..., help="Local model name to activate globally (e.g., qwen2.5-coder:14b, llama3.3)")):
+    """Switch capture-help to run on a local Ollama model (no cloud API key needed)."""
+    from capture_help.config import save_config
+    from capture_help.providers.ollama import OllamaProvider
+
+    if not OllamaProvider.ping():
+        console.print("[red]Ollama server is not running at http://localhost:11434.[/red]")
+        console.print("[dim]Start it with: [bold white]ollama serve[/bold white] (or install: [bold white]ollama pull " + model_name + "[/bold white])[/dim]")
+        return
+
+    save_config(api_key="ollama", base_url="http://localhost:11434/v1", model=model_name, provider="ollama")
+    console.print(f"[bold green]✓ capture-help now uses local Ollama model:[bold white] {model_name}[/bold white]")
+    console.print("[dim]Set DEFAULT_PROVIDER=deepseek and run `capture-help config --key sk-xxx` to switch back to cloud.[/dim]")

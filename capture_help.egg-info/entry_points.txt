@@ -1,2 +1,0 @@
-[console_scripts]
-capture-help = capture_help.cli:app

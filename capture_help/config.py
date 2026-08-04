@@ -70,8 +70,6 @@ def save_config(api_key: str, base_url: Optional[str] = None, model: Optional[st
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         f.write(env_content)
 
-    return CONFIG_FILE
-
     # Reload environment
     load_dotenv(CONFIG_FILE, override=True)
     return CONFIG_FILE
