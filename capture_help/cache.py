@@ -1,14 +1,16 @@
+from datetime import datetime
+import getpass
+import platform
 from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
+from capture_help.memory import get_all_memories
+from capture_help.self_improve import get_user_profile
 
 console = Console()
 
-# Static System Prompt Prefix (must remain 100% identical to trigger DeepSeek Cache Hit)
-STATIC_SYSTEM_PREFIX = r"""You are `capture-help`, an autonomous agentic AI coding & Linux terminal assistant powered by DeepSeek API.
+STATIC_SYSTEM_PREFIX = r"""You are `capture-help`, a self-improving autonomous AI agent inspired by Nous Research Hermes.
 
 CRITICAL MANDATE:
-You are equipped with direct terminal execution capabilities. When the user asks ANY question or request that involves checking system info, running commands, downloading packages, building code, or reading/writing files (such as "check my battery", "download fastfetch", "git status", "check disk space", "run tests"):
+You are equipped with direct terminal execution capabilities. When the user asks ANY question or request that involves checking system info, running commands, downloading packages, building code, or reading/writing files:
 1. DO NOT give instructions or tell the user to run commands manually.
 2. DO NOT ask "Let me know if you want me to run it for you".
 3. YOU MUST IMMEDIATELY EMIT `TOOL_RUN: <command>` ON ITS OWN LINE to execute the command directly!
@@ -24,20 +26,39 @@ User: check my battery
 Assistant: Checking system battery status...
 TOOL_RUN: cat /sys/class/power_supply/BAT0/uevent || upower -i /org/freedesktop/UPower/devices/battery_BAT0 || acpi -b
 
-User: download fastfetch
-Assistant: Downloading and installing fastfetch...
-TOOL_RUN: mkdir -p ~/.local/bin && curl -sL "https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest" | grep -oP 'https://[^\"]*fastfetch-linux-amd64\.tar\.gz' | head -n 1 | xargs curl -sL | tar -xz -C /tmp && find /tmp -name fastfetch -type f -exec cp {} ~/.local/bin/ \;
-
 User: check disk space
 Assistant: Checking available disk space...
-TOOL_RUN: df -h
-
-Supported slash commands: /cheap, /model, /read, /run, /search, /diff, /clear, /exit."""
+TOOL_RUN: df -h"""
 
 def get_cached_system_prompt(project_name: str, languages: list) -> str:
-    """Build a deterministic, cache-optimized system prompt prefix for DeepSeek API."""
+    """Build dynamic, time-aware system prompt with real system timestamp, learned background memory, and user persona model."""
     langs_str = ", ".join(languages) if languages else "Generic"
-    return f"{STATIC_SYSTEM_PREFIX}\nProject Name: {project_name}\nProject Languages: {langs_str}"
+    now_str = datetime.now().strftime("%A, %B %d, %Y - %I:%M %p %Z")
+    username = getpass.getuser()
+    system_os = platform.system() + " " + platform.release()
+
+    memories = get_all_memories()
+    mem_text = ""
+    if memories:
+        mem_text = "\nLearned Background Memory Rules:\n" + "\n".join([f"- {m['content']}" for m in memories])
+
+    profile = get_user_profile()
+    persona_text = ""
+    if profile and "learned_preferences" in profile:
+        persona_text = "\nLearned User Persona & Deepening Model:\n" + "\n".join([f"- {pref}" for pref in profile["learned_preferences"]])
+
+    return (
+        f"{STATIC_SYSTEM_PREFIX}\n\n"
+        f"REAL-TIME SYSTEM ENVIRONMENT:\n"
+        f"- Current Date & Time: {now_str}\n"
+        f"- Current Year: {datetime.now().year}\n"
+        f"- System User: {username}\n"
+        f"- Operating System: Arch Linux ({system_os})\n"
+        f"- Project Name: {project_name}\n"
+        f"- Project Languages: {langs_str}"
+        f"{mem_text}"
+        f"{persona_text}"
+    )
 
 def render_cache_stats(cache_hit_tokens: int, prompt_tokens: int):
     """Render cache hit statistics and savings banner."""

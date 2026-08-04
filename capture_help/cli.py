@@ -39,6 +39,16 @@ from capture_help.commands.redact import redact_command
 from capture_help.commands.update_cmd import update_command
 from capture_help.commands.graph import graph_command
 from capture_help.commands.guard import guard_command
+from capture_help.commands.scan import scan_command
+from capture_help.commands.arch import app as arch_app
+from capture_help.commands.docker_cmd import docker_command
+from capture_help.commands.disk import disk_command
+from capture_help.commands.firewall import firewall_command
+from capture_help.commands.neofetch import neofetch_command
+from capture_help.commands.table_cmd import table_command
+from capture_help.commands.memory_cmd import app as memory_app
+from capture_help.commands.profile import profile_command
+from capture_help.commands.hermes import app as hermes_app
 
 app = typer.Typer(
     name=__app_name__,
@@ -303,6 +313,10 @@ def config(
     config_command(key=key, base_url=base_url, model=model_name)
 
 app.add_typer(local_app, name="local", help="Manage local Ollama models and local AI engine.")
+app.add_typer(arch_app, name="arch", help="Arch Linux power-user tools (Pacman, AUR, Systemd, Mirrors).")
+app.add_typer(memory_app, name="memory", help="Manage background learned rules and user memory preferences.")
+app.add_typer(memory_app, name="learn", help="Alias for 'memory': Teach capture-help new background rules.")
+app.add_typer(hermes_app, name="hermes", help="Nous Research Hermes Agent self-improving subcommands (distill, recall, nudge, persona, daemon).")
 
 @app.command("gpu")
 def gpu():
@@ -337,6 +351,66 @@ def graph():
 def guard():
     """Run pre-push continuous security, secret, and unit test audit guard."""
     guard_command()
+
+@app.command("scan")
+def scan():
+    """Scan local Linux system for viruses, malware, suspicious binaries, and backdoor ports."""
+    scan_command()
+
+@app.command("virus")
+def virus():
+    """Alias for 'capture-help scan': System virus and malware scanner."""
+    scan_command()
+
+@app.command("docker")
+def docker():
+    """Inspect Docker containers, images, and system resource usage."""
+    docker_command()
+
+@app.command("disk")
+def disk():
+    """Inspect disk space partitions, mounted volumes, and large directories."""
+    disk_command()
+
+@app.command("firewall")
+def firewall():
+    """Inspect active system firewall rules (ufw, iptables, nftables)."""
+    firewall_command()
+
+@app.command("neofetch")
+def neofetch():
+    """Display a stunning graphical system & AI dashboard card with Arch Linux ASCII art."""
+    neofetch_command()
+
+@app.command("dashboard")
+def dashboard():
+    """Alias for 'capture-help neofetch': Display system & AI compute dashboard."""
+    neofetch_command()
+
+@app.command("table")
+def table(
+    file_or_text: str = typer.Argument(..., help="Path to CSV/JSON file or raw text to render as a beautiful table")
+):
+    """Format CSV or JSON data into a stunning rounded Rich terminal table."""
+    table_command(file_or_text)
+
+@app.command("profile")
+def profile():
+    """Display the self-improving user persona model and auto-created skills."""
+    profile_command()
+
+@app.command("key")
+def key(
+    api_key: str = typer.Argument(..., help="DeepSeek API key to set for capture-help")
+):
+    """Set DeepSeek API key in one quick command (e.g. capture-help key sk-xxxx)."""
+    save_config(api_key=api_key, provider="deepseek")
+    console.print("[bold green]✓ Saved DeepSeek API key cleanly![/bold green]")
+
+@app.command("skills")
+def skills():
+    """Alias for 'capture-help profile': List auto-created skills from experience."""
+    profile_command()
 
 if __name__ == "__main__":
     app()

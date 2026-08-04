@@ -16,7 +16,7 @@ def redact_command(
         
     # Redact patterns
     redacted = content
-    redacted = re.sub(r'sk-[a-zA-Z0-9]{32,}', '[REDACTED_API_KEY]', redacted)
+    redacted = re.sub(r'sk-(?:proj-)?[a-zA-Z0-9_-]{16,}', '[REDACTED_API_KEY]', redacted)
     redacted = re.sub(r'ghp_[a-zA-Z0-9]{36}', '[REDACTED_GITHUB_TOKEN]', redacted)
     redacted = re.sub(r'(\d{1,3}\.){3}\d{1,3}', '[REDACTED_IP_ADDRESS]', redacted)
     redacted = re.sub(r'(?i)(password|secret|key)\s*[:=]\s*["\']?[^\s"\'\n]+', r'\1: [REDACTED]', redacted)

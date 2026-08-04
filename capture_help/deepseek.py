@@ -80,6 +80,10 @@ class DeepSeekProvider(BaseLLMProvider):
                 self.base_url = "http://localhost:11434/v1"
             if not self.api_key:
                 self.api_key = "ollama"
+        else:
+            # Cloud DeepSeek models must route to https://api.deepseek.com if base_url is currently pointing to local Ollama
+            if "localhost" in self.base_url or "127.0.0.1" in self.base_url or "11434" in self.base_url:
+                self.base_url = "https://api.deepseek.com"
 
         if not self.api_key and "gemma" not in self.model.lower():
             console.print("\n[bold red]Error: DeepSeek API Key not found![/bold red]")

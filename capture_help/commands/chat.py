@@ -3,6 +3,7 @@ import uuid
 from typing import List, Dict, Optional, Tuple
 from rich.console import Console
 from rich.table import Table
+from rich import box
 
 try:
     from prompt_toolkit import PromptSession
@@ -49,8 +50,13 @@ POPUP_STYLE = Style.from_dict({
 
 SLASH_COMMAND_SUGGESTIONS = [
     ("/gemma", "Switch to local Google Gemma 3 12B (Q4) model (FREE / Local Ollama)"),
-    ("/cheap", "Switch to ultra-cheap DeepSeek V4-Flash model ($0.07 / 1M tokens)"),
+    ("/flash", "Switch to ultra-fast DeepSeek V4-Flash model"),
+    ("/coder", "Switch to DeepSeek Coder model"),
+    ("/r1", "Switch to DeepSeek Reasoner R1 model"),
     ("/model", "View or switch active AI model"),
+    ("/persona", "Switch active character persona (e.g. /persona 1, /persona gehrman, /persona reset)"),
+    ("/gehrman", "1-click shortcut to activate Gehrman Sparrow persona"),
+    ("/character", "Alias for /persona character card switcher"),
     ("/plan", "Create step-by-step implementation plan"),
     ("/read", "Read file content into AI chat context"),
     ("/run", "Run terminal shell command and attach output"),
@@ -65,7 +71,23 @@ if PROMPT_TOOLKIT_AVAILABLE:
     class SlashCompleter(Completer):
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
-            if text.startswith("/"):
+            if text.startswith("/persona ") or text.startswith("/character "):
+                prefix, *rest = text.split(maxsplit=1)
+                sub_text = rest[0] if rest else ""
+                from capture_help import persona as persona_mod
+                options = [("list", "List available character personas"), ("reset", "Reset back to default AI Assistant")]
+                for p in persona_mod.list_personas():
+                    options.append((p.name, f"{p.display_name} — {p.description[:40]}"))
+                for opt, desc in options:
+                    if opt.startswith(sub_text):
+                        full_cmd = f"{prefix} {opt}"
+                        yield Completion(
+                            full_cmd,
+                            start_position=-len(text),
+                            display=HTML(f"<bold><cyan>{full_cmd}</cyan></bold>"),
+                            display_meta=HTML(f"<italic>{desc}</italic>")
+                        )
+            elif text.startswith("/"):
                 for cmd, desc in SLASH_COMMAND_SUGGESTIONS:
                     if cmd.startswith(text):
                         yield Completion(
@@ -90,30 +112,166 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
         console.print("[bold green]🥇 Activated Google Gemma 3 12B (Q4) Local Model![/bold green] (FREE via Ollama http://localhost:11434)")
         return True, None
 
+    if sub in ["/scan", "/virus"]:
+        from capture_help.commands.scan import scan_command
+        scan_command()
+        return True, None
+
+    if sub in ["/gehrman", "/sparrow"]:
+        from capture_help import persona as persona_mod
+        p = persona_mod.activate_persona("gehrman")
+        console.print(f"[bold green]{persona_mod.render_banner(p)}[/bold green]")
+        return True, None
+
+    if sub in ["/persona", "/character"]:
+        from capture_help import persona as persona_mod
+        from capture_help.tui_selector import SelectOption, run_tui_selector
+
+        personas = persona_mod.list_personas()
+        active = persona_mod.get_active_persona()
+        active_name = active.name if active else None
+
+        if not arg:
+            options = [
+                SelectOption(
+                    key="default",
+                    title="Standard AI Assistant",
+                    description="Default terminal coding & system administration assistant.",
+                    badge="[Default]",
+                    is_current=(active_name is None),
+                )
+            ]
+            for p in personas:
+                options.append(
+                    SelectOption(
+                        key=p.name,
+                        title=p.display_name,
+                        description=p.description or p.greeting or "Custom character persona card",
+                        badge="[Character Card]",
+                        is_current=(active_name == p.name),
+                    )
+                )
+
+            chosen = run_tui_selector("Select Character Persona", options)
+            if not chosen:
+                return True, None
+            if chosen.key == "default":
+                persona_mod.reset_persona()
+                console.print("[bold green]✓ Persona reset to default AI Assistant.[/bold green]")
+                return True, None
+            else:
+                p = persona_mod.activate_persona(chosen.key)
+                console.print(f"[bold green]{persona_mod.render_banner(p)}[/bold green]")
+                return True, None
+
+        if arg.strip().isdigit():
+            num = int(arg.strip())
+            if num == 0:
+                persona_mod.reset_persona()
+                console.print("[bold green]✓ Persona reset to default AI Assistant.[/bold green]")
+                return True, None
+            elif 1 <= num <= len(personas):
+                p = persona_mod.activate_persona(personas[num - 1].name)
+                console.print(f"[bold green]{persona_mod.render_banner(p)}[/bold green]")
+                return True, None
+
+        if arg.strip() in ["reset", "default"]:
+            persona_mod.reset_persona()
+            console.print("[bold green]✓ Persona reset to default AI Assistant.[/bold green]")
+        else:
+            try:
+                p = persona_mod.activate_persona(arg.strip())
+                console.print(f"[bold green]{persona_mod.render_banner(p)}[/bold green]")
+            except persona_mod.PersonaError as e:
+                console.print(f"[bold red]{e}[/bold red]")
+        return True, None
+
+    if sub in ["/learn", "/memory"]:
+        from capture_help.memory import add_memory, get_all_memories
+        if arg:
+            add_memory("user_preference", arg)
+            console.print(f"[bold green]✓ Learned new background rule:[/bold green] [bold white]{arg}[/bold white]")
+        else:
+            memories = get_all_memories()
+            if not memories:
+                console.print("[yellow]No background memories saved.[/yellow]")
+            else:
+                console.print(f"[bold cyan]🧠 Active Learned Rules ({len(memories)}):[/bold cyan]")
+                for m in memories:
+                    console.print(f"  • [white]{m['content']}[/white]")
+        return True, None
+
+    if sub in ["/gemma", "/gemma12b"]:
+        save_config(api_key=settings.deepseek_api_key, base_url="http://localhost:11434/v1", model="gemma3:12b", provider="ollama")
+        console.print("[bold green]🥇 Activated Google Gemma 3 12B Local Model! (FREE via Ollama)[/bold green]")
+        return True, None
+
+    if sub in ["/gemma27b"]:
+        save_config(api_key=settings.deepseek_api_key, base_url="http://localhost:11434/v1", model="gemma3:27b", provider="ollama")
+        console.print("[bold green]🥈 Activated Google Gemma 3 27B Local Model![/bold green]")
+        return True, None
+
+    if sub in ["/flash", "/cheap"]:
+        save_config(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com", model="deepseek-v4-flash", provider="deepseek")
+        console.print("[bold green]⚡ Activated DeepSeek V4-Flash Model![/bold green]")
+        return True, None
+
+    if sub in ["/coder"]:
+        save_config(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com", model="deepseek-coder", provider="deepseek")
+        console.print("[bold green]💻 Activated DeepSeek Coder Model![/bold green]")
+        return True, None
+
+    if sub in ["/r1", "/reasoner"]:
+        save_config(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com", model="deepseek-reasoner", provider="deepseek")
+        console.print("[bold green]🧠 Activated DeepSeek Reasoner R1 Model![/bold green]")
+        return True, None
+
     if sub == "/model":
         if not arg:
-            table = Table(title="🤖 Available AI Models", border_style="cyan")
-            table.add_column("Model Key", style="bold yellow")
-            table.add_column("Model Name", style="bold white")
-            table.add_column("Status", style="bold green")
-            table.add_column("Input Cost (per 1M)", style="green")
+            from capture_help.tui_selector import SelectOption, run_tui_selector
+            options = []
             for key, data in DEEPSEEK_MODELS.items():
-                status = "[bold green]✓ Active[/bold green]" if key == settings.deepseek_model else ""
-                cost_str = "FREE (Local)" if data['input_cost_per_m'] == 0 else f"${data['input_cost_per_m']:.2f}"
-                table.add_row(key, data["name"], status, cost_str)
-            console.print(table)
-            console.print("[dim]To switch model: [bold white]/model gemma3:12b[/bold white] or [bold white]/model deepseek-v4-flash[/bold white][/dim]")
+                cost_str = "FREE (Local)" if data['input_cost_per_m'] == 0 else f"${data['input_cost_per_m']:.2f}/1M"
+                options.append(
+                    SelectOption(
+                        key=key,
+                        title=data["name"],
+                        description=f"{data['description']} | Provider: {data.get('provider', 'cloud')}",
+                        badge=cost_str,
+                        is_current=(key == settings.deepseek_model),
+                    )
+                )
+            chosen = run_tui_selector("Select AI Model", options)
+            if not chosen:
+                return True, None
+            p_key = chosen.key
+            prov = "ollama" if "gemma" in p_key else "deepseek"
+            url = "http://localhost:11434/v1" if "gemma" in p_key else "https://api.deepseek.com"
+
+            if prov == "deepseek" and (not settings.deepseek_api_key or len(settings.deepseek_api_key) < 10):
+                console.print(f"\n[bold yellow]⚠️ '{DEEPSEEK_MODELS[p_key]['name']}' is a Cloud AI model requiring a DeepSeek API key.[/bold yellow]")
+                console.print("[dim]Set your key in terminal with: [bold white]capture-help key sk-xxxx[/bold white][/dim]")
+                console.print("[bold green]🥇 Remaining on 100% FREE Local Google Gemma 3 12B model![/bold green]\n")
+                p_key = "gemma3:12b"
+                prov = "ollama"
+                url = "http://localhost:11434/v1"
+
+            save_config(api_key=settings.deepseek_api_key or "ollama", base_url=url, model=p_key, provider=prov)
+            console.print(f"[bold green]✓ Activated model:[bold white] {DEEPSEEK_MODELS[p_key]['name']} ({p_key})[/bold white]")
+            return True, None
         else:
             p_key = arg.lower().strip()
             if p_key in DEEPSEEK_MODELS:
                 prov = "ollama" if "gemma" in p_key else "deepseek"
                 url = "http://localhost:11434/v1" if "gemma" in p_key else settings.deepseek_base_url
-                save_config(
-                    api_key=settings.deepseek_api_key or "ollama",
-                    base_url=url,
-                    model=p_key,
-                    provider=prov,
-                )
+                if prov == "deepseek" and (not settings.deepseek_api_key or len(settings.deepseek_api_key) < 10):
+                    console.print(f"\n[bold yellow]⚠️ '{DEEPSEEK_MODELS[p_key]['name']}' is a Cloud AI model requiring a DeepSeek API key.[/bold yellow]")
+                    console.print("[dim]Set your key in terminal with: [bold white]capture-help key sk-xxxx[/bold white][/dim]")
+                    console.print("[bold green]🥇 Remaining on 100% FREE Local Google Gemma 3 12B model![/bold green]\n")
+                    p_key = "gemma3:12b"
+                    prov = "ollama"
+                    url = "http://localhost:11434/v1"
+                save_config(api_key=settings.deepseek_api_key or "ollama", base_url=url, model=p_key, provider=prov)
                 console.print(f"[bold green]✓ Switched active model to:[bold white] {DEEPSEEK_MODELS[p_key]['name']} ({p_key})[/bold white]")
             else:
                 console.print(f"[bold red]Unknown model '{arg}'.[/bold red] Run `/model` to see available models.")
@@ -175,12 +333,14 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
         return True, "Diff added."
 
     if sub in ["/help", "help"]:
-        table = Table(title="⚡ Slash Commands", border_style="cyan")
+        from rich import box
+        table = Table(title="⚡ Slash Commands", border_style="cyan", box=box.ROUNDED)
         table.add_column("Command", style="bold yellow")
         table.add_column("Description", style="white")
         table.add_row("/gemma", "Enable Google Gemma 3 12B (Q4) FREE local Ollama model")
+        table.add_row("/scan /virus", "Scan system for malware, suspicious files, and listening ports")
         table.add_row("/cheap", "Enable ultra-cheap DeepSeek V4-Flash model ($0.07 / 1M tokens)")
-        table.add_row("/model [name]", "Switch model (gemma3:12b, deepseek-v4-flash, deepseek-chat, deepseek-coder, deepseek-reasoner)")
+        table.add_row("/model [name]", "Switch model (gemma3:12b, deepseek-v4-flash, deepseek-chat, deepseek-coder)")
         table.add_row("/read <file>", "Read file into chat context")
         table.add_row("/run <cmd>", "Run shell command and attach output")
         table.add_row("/search <query>", "Search project codebase")
@@ -247,30 +407,64 @@ def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, sessio
             # Sliding Context Window (keep last 6 messages)
             pruned_history = history[-6:]
             
-            console.print(f"[dim]Thinking ({settings.deepseek_model})...[/dim]")
-            provider = get_provider()
-            gen = provider.stream_completion(messages=pruned_history, system_prompt=cached_system_prompt)
-            assistant_reply, stats = stream_response(gen, console)
+            from capture_help.persona import build_system_prompt
+            active_prompt = build_system_prompt(cached_system_prompt)
+
+            try:
+                provider = get_provider()
+                current_prov = getattr(provider, "provider_type", settings.default_provider)
+                if current_prov == "deepseek" and (not settings.deepseek_api_key or len(settings.deepseek_api_key) < 10 or "test" in settings.deepseek_api_key.lower()):
+                    console.print("\n[bold yellow]⚠️ DeepSeek API Key is invalid or not set.[/bold yellow]")
+                    console.print("[bold green]🥇 Automatically switching to 100% FREE Local Google Gemma 3 12B (Ollama)![/bold green]\n")
+                    save_config(api_key="", provider="ollama", model="gemma3:12b")
+                    provider = get_provider()
+                gen = provider.stream_completion(messages=pruned_history, system_prompt=active_prompt)
+                assistant_reply, stats = stream_response(gen, console)
+            except Exception as e:
+                err_str = str(e)
+                if "401" in err_str or "Authentication" in err_str or "invalid" in err_str.lower():
+                    console.print("\n[bold yellow]⚠️ DeepSeek API key authentication failed. Self-healing fallback to 100% FREE Local Google Gemma 3 12B (Ollama)...[/bold yellow]\n")
+                    save_config(api_key="", provider="ollama", model="gemma3:12b")
+                    provider = get_provider()
+                    gen = provider.stream_completion(messages=pruned_history, system_prompt=active_prompt)
+                    assistant_reply, stats = stream_response(gen, console)
+                else:
+                    console.print(f"[bold red]API Error:[/bold red] {err_str}")
+                    continue
 
             if stats:
                 render_cache_stats(stats.cache_hit_tokens, stats.prompt_tokens)
 
-            # Tool execution check & DSML cleanup
-            executed, tool_out = check_and_execute_agent_tools(assistant_reply)
-            clean_reply = clean_dsml_response(assistant_reply)
+            # Multi-turn Autonomous Tool Execution Loop (up to 10 consecutive tool turns)
+            max_tool_turns = 10
+            turn_count = 0
+            curr_reply = assistant_reply
 
-            history.append({"role": "assistant", "content": clean_reply or assistant_reply})
-            save_session(sess_id, history)
+            while turn_count < max_tool_turns:
+                executed, tool_out = check_and_execute_agent_tools(curr_reply)
+                clean_reply = clean_dsml_response(curr_reply)
 
-            if executed:
+                if turn_count == 0 or clean_reply:
+                    history.append({"role": "assistant", "content": clean_reply or curr_reply})
+                    save_session(sess_id, history)
+
+                if not executed:
+                    break
+
+                turn_count += 1
+                if turn_count >= max_tool_turns:
+                    console.print("\n[dim]Reached maximum autonomous tool execution depth (10 turns).[/dim]")
+                    break
+
+                console.print(f"\n[bold cyan]🔄 [Turn {turn_count}/{max_tool_turns}] Continuing Autonomous Task Execution...[/bold cyan]")
+
                 history.append({"role": "user", "content": f"Tool Output:\n{tool_out[:2500]}"})
-                pruned_history2 = history[-6:]
-                gen2 = provider.stream_completion(messages=pruned_history2, system_prompt=cached_system_prompt)
-                reply2, stats2 = stream_response(gen2, console)
-                if stats2:
-                    render_cache_stats(stats2.cache_hit_tokens, stats2.prompt_tokens)
-                history.append({"role": "assistant", "content": clean_dsml_response(reply2)})
-                save_session(sess_id, history)
+                pruned_history_loop = history[-6:]
+
+                gen_loop = provider.stream_completion(messages=pruned_history_loop, system_prompt=active_prompt)
+                curr_reply, stats_loop = stream_response(gen_loop, console)
+                if stats_loop:
+                    render_cache_stats(stats_loop.cache_hit_tokens, stats_loop.prompt_tokens)
 
         except (KeyboardInterrupt, EOFError):
             if history:

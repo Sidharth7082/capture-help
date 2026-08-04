@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyo
 
 # C extensions
 *.so
@@ -30,8 +32,19 @@ venv/
 ENV/
 env/
 
-# Local configuration & index caches
+# Private user data, API keys, credentials, and databases
 .env
-.capture-help/
+.env.*
+*.env
 *.sqlite
 *.db
+*.log
+*.bak
+*.pem
+*.key
+user_profile.json
+memory.db
+skills/
+.config/
+.capture-help/
+secrets/

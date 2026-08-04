@@ -67,8 +67,48 @@ def agent_write_file(filepath: str, content: str) -> str:
             return f"Error writing file: {str(e)}"
     return "Action cancelled by user."
 
+ARCH_PACKAGE_MAP = {
+    "clamscan": "clamav",
+    "htop": "htop",
+    "btop": "btop",
+    "nmap": "nmap",
+    "docker": "docker",
+    "git": "git",
+    "pip": "python-pip",
+    "wget": "wget",
+    "curl": "curl",
+    "ffmpeg": "ffmpeg",
+    "tree": "tree",
+    "rg": "ripgrep",
+    "fd": "fd",
+    "jq": "jq",
+}
+
+
+def resolve_missing_command_hint(cmd_str: str, err_out: str) -> str:
+    """If command not found, append Arch Linux package installation hint."""
+    if "command not found" in err_out or "not found" in err_out.lower():
+        cmd_tokens = cmd_str.strip().split()
+        missing_cmd = cmd_tokens[0] if cmd_tokens else cmd_str
+        pkg = ARCH_PACKAGE_MAP.get(missing_cmd, missing_cmd)
+        hint = f"\n\n[ARCH LINUX HINT]: '{missing_cmd}' is not installed. You can install it on Arch Linux using: TOOL_RUN: sudo pacman -S {pkg} --noconfirm"
+        return err_out + hint
+    return err_out
+
+
 def agent_run_command(command_str: str) -> str:
-    console.print(f"\n[bold cyan]⚡ Proposed Tool Action: RUN_COMMAND[/bold cyan] [bold yellow]{command_str}[/bold yellow]")
+    from rich import box
+    is_pkg = any(k in command_str for k in ["pacman", "yay", "paru", "pip install", "apt"])
+    title_text = "📦 Proposed Package Installation: RUN_COMMAND" if is_pkg else "⚡ Proposed Tool Action: RUN_COMMAND"
+    border = "yellow" if is_pkg else "cyan"
+
+    console.print(Panel(
+        f"[bold yellow]{command_str}[/bold yellow]",
+        title=f"[bold {border}]{title_text}[/bold {border}]",
+        border_style=border,
+        box=box.ROUNDED,
+        expand=False
+    ))
 
     if Confirm.ask("[bold yellow]Execute command?[/bold yellow]", default=True):
         try:
@@ -77,12 +117,22 @@ def agent_run_command(command_str: str) -> str:
             stderr = res.stderr.strip()
             out = ""
             if stdout:
-                out += f"STDOUT:\n{stdout}\n"
+                out += f"{stdout}\n"
             if stderr:
-                out += f"STDERR:\n{stderr}\n"
+                out += f"[STDERR]:\n{stderr}\n"
             if not out:
                 out = "Command executed cleanly with 0 output."
-            return out[:10_000]
+
+            out_with_hint = resolve_missing_command_hint(command_str, out)
+
+            console.print(Panel(
+                out_with_hint[:4000],
+                title=f"[bold green]✓ Execution Output ({command_str[:30]})[/bold green]",
+                border_style="bright_blue",
+                box=box.ROUNDED,
+                expand=False
+            ))
+            return out_with_hint[:10_000]
         except subprocess.TimeoutExpired:
             return "Error: Command timed out after 60 seconds."
         except Exception as e:
