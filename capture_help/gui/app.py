@@ -69,6 +69,7 @@ from capture_help.gui.widgets import (
     SlashPopup,
     StatusFooter,
     ThinkingRow,
+    workspace_summary,
 )
 from capture_help.history import list_sessions, load_session, save_session
 from capture_help.project import fingerprint_project
@@ -79,7 +80,7 @@ MAX_TOOL_TURNS = 5
 CONFIRM_TIMEOUT = 120
 
 # Input placeholder is scoped to the current view state.
-HOME_PLACEHOLDER = "What would you like to build today?"
+HOME_PLACEHOLDER = "Explain code, fix bugs, or search your workspace…"
 CHAT_PLACEHOLDER = "Ask Capture Help…"
 
 SLASH_COMMANDS = [
@@ -211,7 +212,7 @@ class CaptureHelpApp(App[None]):
                 with Vertical(id="input-area"):
                     yield SlashPopup(SLASH_COMMANDS)
                     yield ChatInput(
-                        placeholder="What would you like to build today?",
+                        placeholder=HOME_PLACEHOLDER,
                         id="prompt-input",
                     )
                     yield Label(
@@ -238,6 +239,14 @@ class CaptureHelpApp(App[None]):
         self.footer.set_state("ready")
         self._set_landing(not self.history)
         self.query_one("#prompt-input", ChatInput).focus()
+        # Gentle entrance: fade the chrome in over ~350ms.
+        for selector in ("#app-header", "#sidebar", "#status-footer"):
+            try:
+                w = self.query_one(selector)
+                w.styles.opacity = 0.0
+                w.styles.animate("opacity", 1.0, duration=0.35)
+            except Exception:  # noqa: BLE001
+                pass
 
     # ------------------------------------------------------------------ #
     # Initialization helpers
@@ -251,13 +260,9 @@ class CaptureHelpApp(App[None]):
         self.sidebar.set_open_files(self._open_files)
 
     def _populate_landing(self) -> None:
-        try:
-            sessions = list_sessions()[:8]
-        except Exception:  # noqa: BLE001
-            sessions = []
-        if self.landing is not None:
-            self.landing.set_recent_chats(sessions)
-            self.landing.set_recent_files([f.name for f in self._recent_project_files()])
+        if self.landing is None:
+            return
+        self.landing.set_workspace(workspace_summary(self.project))
 
     def _recent_project_files(self) -> list:
         """Project source files, newest first, as a lightweight recent-files list."""
@@ -574,7 +579,9 @@ class CaptureHelpApp(App[None]):
             self._stop_thinking()
             self._current_message = self.add_message("assistant", "")
         self._ui_text += chunk
-        self._current_message.update_markdown(self._ui_text)
+        # Streaming cursor: append a blinking block after whatever has streamed.
+        cursor = "▍" if len(self._ui_text) % 2 else "▋"
+        self._current_message.update_markdown(self._ui_text + cursor)
         self._scroll_chat()
 
     def _on_stats(self, stats) -> None:
@@ -690,7 +697,11 @@ class CaptureHelpApp(App[None]):
     # ------------------------------------------------------------------ #
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
-        if button_id.startswith("chip-"):
+        if button_id == "qa-primary":
+            # The hero action: focus the input and let the user type a prompt.
+            self.query_one("#prompt-input", ChatInput).focus()
+            self.notify("Type your prompt below, or use / for commands.", severity="information")
+        elif button_id.startswith("chip-"):
             try:
                 text = EXAMPLE_PROMPTS[int(button_id.split("-", 1)[1])]
             except (ValueError, IndexError):

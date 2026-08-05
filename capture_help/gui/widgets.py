@@ -1,5 +1,9 @@
 """Custom Textual widgets for the Capture Help glass UI."""
 
+import subprocess
+import time
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.containers import Container, Grid, Horizontal, Vertical
 from textual.widgets import Button, Collapsible, Input, Label, Markdown, OptionList, RichLog, Static
@@ -9,6 +13,8 @@ from capture_help import __version__
 from capture_help.config import settings
 from capture_help.deepseek import DEEPSEEK_MODELS
 from capture_help.gui import theme
+
+ICON = theme.ICONS
 
 ROLE_ICONS = {
     "user": "◆",
@@ -41,6 +47,103 @@ def provider_display_name() -> str:
 
 
 TAGLINE = "Fast  •  Private  •  Open Source"
+
+
+def relative_time(timestamp: float | None) -> str:
+    """Human-friendly relative label like '2 min ago' / 'Yesterday'."""
+    if not timestamp:
+        return "recently"
+    delta = time.time() - float(timestamp)
+    if delta < 60:
+        return "just now"
+    if delta < 3600:
+        return f"{int(delta // 60)} min ago"
+    if delta < 86400:
+        return f"{int(delta // 3600)} hr ago"
+    if delta < 172800:
+        return "Yesterday"
+    return f"{int(delta // 86400)} days ago"
+
+
+def title_emoji(title: str) -> str:
+    """Pick an emoji for a recent-conversation title by keyword sniffing."""
+    t = (title or "").lower()
+    buckets = (
+        (("fix", "bug", "crash", "error"), "🐛"),
+        (("refactor", "clean", "simplif", "improv"), "🔧"),
+        (("build", "compile", "cmake"), "🏗"),
+        (("doc", "document", "manual"), "📄"),
+        (("feature", "add", "new"), "✨"),
+        (("test", "unit"), "🧪"),
+        (("search", "find", "lookup"), "🔍"),
+        (("render", "glass", "ui", "gui"), "🎨"),
+    )
+    for keywords, emoji in buckets:
+        if any(k in t for k in keywords):
+            return emoji
+    return "💬"
+
+
+
+def workspace_summary(project: dict | None = None) -> dict:
+    """Gather a lightweight 'Today's Workspace' snapshot for the landing panel.
+
+    Returns modified-file count, last commit subject, TODO/FIXME count and a
+    build status derived from git cleanliness. Every measurement is best-effort
+    and wrapped so it can never raise into the GUI.
+    """
+    project = project or {}
+    root = Path(project.get("root") or ".")
+    summary = {
+        "modified": 0,
+        "last_commit": None,
+        "todos": 0,
+        "clean": bool(project.get("git_clean", True)),
+    }
+
+    try:
+        res = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(root), capture_output=True, text=True, timeout=5,
+        )
+        entries = [ln for ln in res.stdout.splitlines() if ln.strip()]
+        summary["modified"] = len(entries)
+        summary["clean"] = len(entries) == 0
+    except Exception:
+        pass
+
+    try:
+        res = subprocess.run(
+            ["git", "log", "-1", "--format=%h %s"],
+            cwd=str(root), capture_output=True, text=True, timeout=5,
+        )
+        summary["last_commit"] = res.stdout.strip() or None
+    except Exception:
+        summary["last_commit"] = None
+
+    try:
+        count = 0
+        exts = {".py", ".go", ".cpp", ".hpp", ".c", ".h", ".qml", ".lua", ".ts", ".js"}
+        for r, dirs, files in __import__("os").walk(root):
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("venv", "node_modules", "__pycache__")]
+            for f in files:
+                if not f.endswith(tuple(exts)):
+                    continue
+                try:
+                    with open(Path(r) / f, "r", encoding="utf-8", errors="ignore") as fh:
+                        for line in fh:
+                            if "TODO" in line or "FIXME" in line:
+                                count += 1
+                except Exception:
+                    continue
+                if count > 9999:
+                    break
+            if count > 9999:
+                break
+        summary["todos"] = count
+    except Exception:
+        summary["todos"] = 0
+    return summary
 
 # --------------------------------------------------------------------------- #
 # Chat widgets
@@ -89,35 +192,36 @@ class ThinkingRow(Container):
 
 
 class HeaderBar(Vertical):
-    """Product hero + workspace metadata. Capture Help's own identity strip."""
+    """Compact product hero: identity line + a single-line workspace status
+    strip. Replaces the tall logo/tagline block and five wide info cards with
+    two tight rows so the conversation starts higher on screen."""
 
     def __init__(self, project: dict, **kwargs):
         super().__init__(id="app-header", **kwargs)
         self.project = project
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="hero-title-block"):
+        with Horizontal(id="hero-row"):
             yield Label(f"{theme.ICONS['bolt']} Capture Help", id="app-title")
             yield Label("Local AI Coding Assistant", id="app-subtitle")
-            yield Label(TAGLINE, id="app-tagline")
 
-        # Workspace info grid: Project · Languages · Git · Model · Provider
-        with Grid(id="workspace-grid", classes="workspace-grid"):
-            langs = self.project.get("languages", []) or []
-            git_clean = self.project.get("git_clean", True)
-            git_text = f"{theme.ICONS['git']} ✓ Clean" if git_clean else f"{theme.ICONS['git']} ✗ Modified"
-            git_cls = "wp-value wp-git-clean" if git_clean else "wp-value wp-git-dirty"
+        langs = " • ".join((self.project.get("languages") or [])[:3]) or "—"
+        git_clean = self.project.get("git_clean", True)
+        git = "✓ Clean" if git_clean else "✗ Modified"
+        git_cls = "strip-git-clean" if git_clean else "strip-git-dirty"
 
-            for label, value, value_cls in (
-                ("Project", self.project.get("name", "project"), "wp-value"),
-                ("Languages", "  •  ".join(langs[:4]) or "—", "wp-value"),
-                ("Git", git_text, git_cls),
-                ("Model", model_display_name(), "wp-value wp-accent"),
-                ("Provider", provider_display_name(), "wp-value"),
-            ):
-                with Vertical(classes="wp-field"):
-                    yield Label(label.upper(), classes="wp-label")
-                    yield Label(value, classes=value_cls)
+        strip = (
+            f"{theme.ICONS['project']} {self.project.get('name', 'project').upper()}"
+            f"   •   "
+            f"{langs}"
+            f"   •   "
+        )
+        # Git / model / provider are separate Static labels so each can be colored
+        with Horizontal(id="workspace-strip"):
+            yield Label(strip, id="strip-project")
+            yield Label(git, classes=f"strip-pill {git_cls}")
+            yield Label(model_display_name(), classes="strip-pill strip-accent")
+            yield Label(provider_display_name(), classes="strip-pill", id="strip-provider")
 
 
 class StatusFooter(Horizontal):
@@ -163,8 +267,20 @@ class StatusFooter(Horizontal):
         yield self.state_label
 
     def set_model(self, model: str) -> None:
-        if self.model_label:
-            self.model_label.update(f"{theme.ICONS['model']}  {model_display_name(model)}")
+        if not self.model_label:
+            return
+        name = model_display_name(model)
+        is_local = (
+            settings.default_provider == "ollama"
+            or "gemma" in model.lower()
+            or "localhost" in (settings.deepseek_base_url or "").lower()
+            or "11434" in (settings.deepseek_base_url or "").lower()
+        )
+        tag = "LOCAL" if is_local else "CLOUD"
+        badge = f"{tag} {name}"
+        cls = "status-item model model-local" if is_local else "status-item model model-cloud"
+        self.model_label.update(badge)
+        self.model_label.set_classes(cls)
 
     def set_provider(self, provider: str | None = None) -> None:
         if self.provider_label:
@@ -226,9 +342,13 @@ class SidebarPanel(Vertical):
             return
         for s in sessions:
             sid = str(s.get("id", ""))
-            title = s.get("title", "Chat Session")[:30]
+            title = s.get("title", "Chat Session")[:22]
             turns = s.get("turns", 0)
-            self.recent_list.add_option(Option(f"{title}  · {turns}t", id=f"session:{sid}"))
+            emoji = title_emoji(title)
+            rel = relative_time(s.get("timestamp"))
+            self.recent_list.add_option(
+                Option(f"{emoji} {title}\n{rel}  ·  {turns} turns", id=f"session:{sid}")
+            )
 
     def set_open_files(self, files: list) -> None:
         if not self.open_files:
@@ -282,13 +402,12 @@ class LandingPanel(Vertical):
     """The empty-state landing screen.
 
     Hero question, clickable example prompts, keyboard-navigable quick actions
-    and recent conversations / files. It fades away once a conversation begins.
+    and a Today's-Workspace summary. It fades away once a conversation begins.
     """
 
     def __init__(self, **kwargs):
         super().__init__(id="landing", **kwargs)
-        self.recent_list: OptionList | None = None
-        self.recent_files: Vertical | None = None
+        self.workspace: Vertical | None = None
 
     def compose(self) -> ComposeResult:
         yield Label("What would you like to build today?", id="landing-question")
@@ -298,43 +417,42 @@ class LandingPanel(Vertical):
             for i, text in enumerate(EXAMPLE_PROMPTS):
                 yield Button(text, id=f"chip-{i}", classes="chip")
 
+        yield Button("▶  Ask Capture Help", id="qa-primary", classes="qa-btn qa-primary")
         yield Label("Quick Actions", classes="section-label")
         with Grid(id="qa-grid"):
             for key, label, _ in QUICK_ACTIONS:
-                yield Button(label, id=f"qa-{key}", classes="qa-btn")
+                yield Button(label, id=f"qa-{key}", classes="qa-btn qa-secondary")
 
-        with Horizontal(classes="landing-columns"):
-            with Vertical(classes="landing-col"):
-                yield Label("Recent Conversations", classes="section-label")
-                self.recent_list = OptionList(id="landing-recent")
-                yield self.recent_list
-            with Vertical(classes="landing-col"):
-                yield Label("Recent Files", classes="section-label")
-                self.recent_files = Vertical(id="landing-files")
-                yield self.recent_files
+        with Vertical(classes="workspace-panel"):
+            yield Label("Today's Workspace", classes="section-label")
+            self.workspace_items = Vertical(id="workspace-items")
+            yield self.workspace_items
+
+    def set_workspace(self, summary: dict) -> None:
+        """Render the Today's-Workspace summary as a small two-column list."""
+        if not self.workspace_items:
+            return
+        self.workspace_items.remove_children()
+        rows = [
+            ("modified", f"{ICON['project']}  Modified files",
+             f"{summary.get('modified') or 0}"),
+            ("commit", f"{ICON['git']}  Last commit",
+             summary.get("last_commit") or "—"),
+            ("todos", "☑  TODOs", f"{summary.get('todos') or 0}"),
+            ("build", "▶  Build",
+             "✓ Passing" if summary.get("clean") else "✗ Checking"),
+        ]
+        for key, left, right in rows:
+            right_cls = "ws-value ws-good" if key == "build" and summary.get("clean") else "ws-value"
+            row = Horizontal(classes="ws-row")
+            self.workspace_items.mount(row)
+            row.mount(Label(left, classes="ws-key"))
+            row.mount(Label("", classes="status-spacer"))
+            row.mount(Label(right, classes=right_cls))
 
     def set_recent_chats(self, sessions: list) -> None:
-        if not self.recent_list:
-            return
-        self.recent_list.clear_options()
-        if not sessions:
-            self.recent_list.add_option(Option("(no saved conversations)", id="none"))
-            return
-        for s in sessions[:8]:
-            sid = str(s.get("id", ""))
-            title = s.get("title", "Chat Session")[:26]
-            turns = s.get("turns", 0)
-            self.recent_list.add_option(Option(f"• {title}   · {turns}t", id=f"session:{sid}"))
-
-    def set_recent_files(self, files: list) -> None:
-        if not self.recent_files:
-            return
-        self.recent_files.remove_children()
-        if not files:
-            self.recent_files.mount(Label("(none yet)", classes="landing-file-item"))
-            return
-        for f in files[:10]:
-            self.recent_files.mount(Label(f"• {f}", classes="landing-file-item"))
+        """Backward-compat no-op: recent conversations live in the sidebar now."""
+        return
 
 
 # --------------------------------------------------------------------------- #

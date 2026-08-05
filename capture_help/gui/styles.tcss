@@ -34,17 +34,18 @@ Screen {
     background: rgba(0, 0, 0, 0.45);
 }
 
-/* ---------- Header (hero) ---------- */
+/* ---------- Header (compact hero) ---------- */
 #app-header {
     layer: ui;
     background: #12161f;
     border-bottom: solid #1b2230;
     height: auto;
-    padding: 1 2 2 2;
+    padding: 1 2 1 2;
 }
 
-#hero-title-block {
+#hero-row {
     height: auto;
+    align-vertical: middle;
 }
 
 #app-title {
@@ -55,47 +56,37 @@ Screen {
 #app-subtitle {
     color: #63c6e2;
     text-style: bold;
+    margin: 0 0 0 1;
 }
 
-#app-tagline {
-    color: #5d6878;
-    margin: 0 0 1 0;
-}
-
-/* Workspace info grid */
-#workspace-grid {
+/* Single-line workspace status strip */
+#workspace-strip {
     height: auto;
-    grid-size: 5;
-    grid-columns: 1fr 1fr 1fr 1fr 1fr;
-    grid-gutter: 1 2;
+    margin: 0 0 0 1;
+    align-vertical: middle;
 }
 
-.wp-field {
-    height: auto;
-    background: #161b26;
-    border: round #1d2432;
+#strip-project {
+    color: #8f9aa9;
+}
+
+.strip-pill {
+    color: #8f9aa9;
     padding: 0 1 0 1;
-    min-height: 3;
+    margin: 0 0 0 1;
+    background: #171c28;
+    border: round #1d2432;
 }
 
-.wp-label {
-    color: #5d6878;
-    text-style: bold;
-}
-
-.wp-value {
-    color: #e8edf4;
-}
-
-.wp-accent {
+.strip-accent {
     color: #63c6e2;
 }
 
-.wp-git-clean {
+.strip-git-clean {
     color: #4ed98c;
 }
 
-.wp-git-dirty {
+.strip-git-dirty {
     color: #e5b95c;
 }
 
@@ -144,6 +135,9 @@ Screen {
 
 .sidebar-section OptionList > .option-list--option {
     color: #8f9aa9;
+    padding: 0 0 0 1;
+    height: auto;
+    min-height: 2;
 }
 
 .sidebar-section OptionList > .option-list--option:hover,
@@ -351,12 +345,27 @@ Screen {
 }
 
 .status-item.model {
+    background: #1d2432;
+    border: round #3a7d92;
     color: #63c6e2;
+    padding: 0 1 0 1;
+    margin: 0 0 0 1;
+    text-style: bold;
 }
 
 .status-item.model:hover {
-    text-style: underline;
-    color: #8fd8f2;
+    text-style: bold underline;
+    color: #9adcf0;
+    border: round #63c6e2;
+}
+
+.status-item.model-local {
+    color: #4ed98c;
+    border: round #2c5a46;
+}
+
+.status-item.model-cloud {
+    color: #9adcf0;
 }
 
 .status-item.git-clean {
@@ -438,6 +447,29 @@ Screen {
     margin: 1 0 1 0;
 }
 
+/* Primary action button (Ask Capture Help) */
+.qa-primary {
+    background: #1f3a47;
+    border: round #63c6e2;
+    color: #9adcf0;
+    text-style: bold;
+    height: 3;
+    margin: 0 0 1 0;
+    width: 60%;
+    align-horizontal: center;
+}
+
+.qa-primary:hover {
+    background: #2c4a5c;
+    border: round #9adcf0;
+    color: #e8edf4;
+}
+
+.qa-primary:focus {
+    border: round #9adcf0;
+    background: #2c4a5c;
+}
+
 #qa-grid {
     height: auto;
     grid-size: 3;
@@ -456,65 +488,49 @@ Screen {
     height: 3;
 }
 
-.qa-btn:hover {
+.qa-secondary:hover {
     background: #2c4a5c;
     border: round #63c6e2;
     color: #e8edf4;
 }
 
-.qa-btn:focus {
+.qa-secondary:focus {
     border: round #63c6e2;
     color: #e8edf4;
     text-style: bold;
 }
 
-.landing-columns {
+/* Today's Workspace summary */
+.workspace-panel {
     height: auto;
-    width: 100%;
+    width: 60%;
+    align-horizontal: center;
+    background: #12161f;
+    border: round #1d2432;
+    padding: 0 2 1 2;
     margin: 0 0 1 0;
 }
 
-.landing-col .section-label {
-    text-align: left;
-}
-
-.landing-col {
-    width: 1fr;
-    min-width: 18;
+#workspace-items {
     height: auto;
-    background: #12161f;
-    border: round #1d2432;
-    padding: 0 1 0 1;
-    margin: 0 1 0 0;
-    min-height: 5;
 }
 
-#landing-recent {
-    background: transparent;
-    border: none;
+.ws-row {
     height: auto;
-    width: 100%;
-    max-height: 10;
 }
 
-#landing-recent > .option-list--option {
+.ws-key {
     color: #8f9aa9;
+    padding: 0 0 0 0;
 }
 
-#landing-recent > .option-list--option:hover,
-#landing-recent > .option-list--option-selected {
-    background: #1d2432;
+.ws-value {
     color: #e8edf4;
+    text-style: bold;
 }
 
-.landing-file-item {
-    color: #8f9aa9;
-    padding: 0 0 0 1;
-}
-
-.landing-file-item:hover {
-    color: #e8edf4;
-    background: #1d2432;
+.ws-good {
+    color: #4ed98c;
 }
 
 /* ---------- Debug panel (collapsible, right side) ---------- */
@@ -617,4 +633,26 @@ Button:focus {
     background: #161b26;
     border: round #63c6e2;
     color: #e8edf4;
+}
+
+/* ---------- Subtle motion ----------
+   CSS animations are driven from Python (widget.animate) since this Textual
+   build's tokenizer does not accept @keyframes; transitions below smooth the
+   property changes the app makes. */
+
+.qa-primary, .qa-secondary, .chip {
+    transition: opacity 120ms linear;
+}
+
+.chat-message.enter {
+    transition: opacity 300ms linear;
+}
+
+#prompt-input {
+    transition: opacity 150ms linear;
+}
+
+/* Gentle pulse while the model is streaming */
+.status-item.state-streaming {
+    text-style: bold;
 }

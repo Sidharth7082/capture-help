@@ -238,13 +238,13 @@ def test_input_placeholder_follows_view_state():
             await pilot.pause()
             await pilot.pause()
             inp = app.query_one("#prompt-input")
-            assert inp.placeholder == "What would you like to build today?"
+            assert inp.placeholder == "Explain code, fix bugs, or search your workspace…"
             app.add_message("user", "hello")
             await pilot.pause(app._VIEW_FADE_S + 0.1)
             assert inp.placeholder == "Ask Capture Help…"
             app._handle_slash("/clear")
             await pilot.pause()
-            assert inp.placeholder == "What would you like to build today?"
+            assert inp.placeholder == "Explain code, fix bugs, or search your workspace…"
 
     asyncio.run(scenario())
 
@@ -411,5 +411,106 @@ def test_slash_code_command_moves_highlight_and_escape_hides():
             await pilot.press("escape")
             await pilot.pause()
             assert popup.styles.display == "none"
+
+    asyncio.run(scenario())
+
+# --------------------------------------------------------------------------- #
+# UX polish: Today's Workspace, primary button, model badge, relatives
+# --------------------------------------------------------------------------- #
+def test_landing_has_primary_ask_button_and_no_duplicate_recent_list():
+    """The landing panel exposes a primary 'Ask Capture Help' CTA and the
+    duplicated Recent Conversations panel has been replaced by Workspace."""
+    from capture_help.gui.widgets import LandingPanel
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            primary = app.query_one("#qa-primary")
+            assert "qa-primary" in primary.classes
+            landing = app.query_one("#landing", LandingPanel)
+            # Recent conversations now live only in the sidebar
+            assert len(landing.query("#landing-recent")) == 0
+            assert app.query_one("#recent-chats") is not None
+            # Workspace summary populated
+            assert app.query_one("#workspace-items").children
+
+    asyncio.run(scenario())
+
+
+def test_primary_button_focuses_input(monkeypatch):
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            inp = app.query_one("#prompt-input")
+            inp.blur()
+            await pilot.pause()
+            app.query_one("#qa-primary").press()
+            await pilot.pause()
+            assert app.focused is inp
+
+    asyncio.run(scenario())
+
+
+def test_workspace_summary_and_header_strip(monkeypatch):
+    from capture_help.gui import widgets as w
+
+    monkeypatch.setattr(
+        w,
+        "workspace_summary",
+        lambda project: {"modified": 3, "last_commit": "abc Improve renderer",
+                         "todos": 12, "clean": True},
+    )
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            # Header uses a compact strip, not wide per-field cards
+            assert app.query_one("#workspace-strip") is not None
+            assert len(app.query(".workspace-grid")) == 0
+            # Footer / model label is a badge
+            footer = app.footer
+            assert "model-local" in footer.model_label.classes or "model-cloud" in footer.model_label.classes
+
+    asyncio.run(scenario())
+
+
+def test_relative_time_and_title_emoji():
+    import time
+
+    from capture_help.gui.widgets import relative_time, title_emoji
+
+    assert "min ago" in relative_time(time.time() - 120)
+    assert "just now" in relative_time(time.time() - 5)
+    assert title_emoji("Fix the QML crash") == "🐛"
+    assert title_emoji("Refactor render pipeline") == "🔧"
+    assert title_emoji("Some random thing") == "💬"
+
+
+def test_sidebar_recent_chats_are_enriched(monkeypatch):
+    import time
+    from capture_help.gui.widgets import SidebarPanel
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            sidebar = app.query_one("#sidebar", SidebarPanel)
+            sessions = [
+                {"id": "1", "title": "Fix build error", "turns": 3, "timestamp": time.time() - 120},
+                {"id": "2", "title": "Add feature", "turns": 1, "timestamp": time.time()},
+            ]
+            sidebar.set_recent_chats(sessions)
+            await pilot.pause()
+            opts = list(sidebar.recent_list.options)
+            assert len(opts) == 2
+            assert "🐛" in str(opts[0].prompt)
+            assert "min ago" in str(opts[0].prompt)
 
     asyncio.run(scenario())
