@@ -354,149 +354,27 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
 
     return False, None
 
+
+
 def chat_command(initial_messages: Optional[List[Dict[str, str]]] = None, session_id: Optional[str] = None):
-    """Interactive AI chat with styled prompt_toolkit slash autocompletion popup."""
-    print_header("AI Assistant Chat", "Type / for live autocompletion popup. Type /exit to quit.")
-    
-    info = render_project_badge()
-    cached_system_prompt = get_cached_system_prompt(info["name"], info["languages"])
+    """Launch the premium glass chat UI.
 
-    history: List[Dict[str, str]] = initial_messages or []
-    sess_id = session_id or str(uuid.uuid4())[:8]
+    Requires an interactive terminal. When stdin/stdout is piped (not a TTY) it
+    falls back to a friendly header so it never corrupts a pipeline.
+    """
+    if initial_messages is None and session_id:
+        from capture_help.history import load_session
 
-    if history:
-        console.print(f"[dim]Loaded {len(history)} previous message(s).[/dim]")
+        data = load_session(session_id)
+        if data and data.get("messages"):
+            initial_messages = data["messages"]
+            session_id = str(data.get("id", session_id))
 
-    # Character-card first message: seed a fresh chat with the persona's
-    # greeting as the opening assistant turn (JanitorAI / CharacterAI style).
-    from capture_help import persona as persona_mod
-    active_persona = persona_mod.get_active_persona()
-    if not history and active_persona is not None and active_persona.first_message:
-        history.append({"role": "assistant", "content": active_persona.first_message})
-        console.print(f"[bold magenta]💬 {active_persona.display_name}:[/bold magenta] [italic]{active_persona.first_message}[/italic]")
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print_header("AI Assistant Chat", "Interactive chat requires a terminal.")
+        console.print("[dim]Run this in an interactive terminal (e.g. `capture-help chat`).[/dim]")
+        return
 
-    if PROMPT_TOOLKIT_AVAILABLE:
-        try:
-            session = PromptSession(completer=SlashCompleter(), style=POPUP_STYLE)
-        except Exception:
-            session = None
-    else:
-        session = None
+    from capture_help.gui.app import CaptureHelpApp
 
-    while True:
-        try:
-            if session:
-                user_input = session.prompt(HTML("\n<prompt>capture-help&gt; </prompt>")).strip()
-            else:
-                user_input = Prompt.ask("\n[bold cyan]capture-help>[/bold cyan] ").strip()
-
-            if not user_input:
-                continue
-
-            if user_input.lower() in ["/exit", "exit", "quit", ":q"]:
-                if history:
-                    save_session(sess_id, history)
-                    console.print(f"[dim]Session saved (ID: {sess_id}). Goodbye![/dim]")
-                else:
-                    console.print("[dim]Goodbye![/dim]")
-                break
-
-            if user_input.lower() in ["/clear", "clear"]:
-                history = []
-                console.print("[green]✓ Chat history cleared.[/green]")
-                continue
-
-            if user_input.startswith("/"):
-                handled, sys_msg = handle_slash_command(user_input, history)
-                if handled:
-                    save_session(sess_id, history)
-                    continue
-
-            history.append({"role": "user", "content": user_input})
-
-            # Sliding context window. Configurable via CAPTURE_HELP_CONTEXT_MESSAGES;
-            # defaults to a generous window instead of a hard-coded 6 messages.
-            # Set to 0 for unlimited context (the whole conversation).
-            import os as _os
-            try:
-                ctx_limit = int(_os.getenv("CAPTURE_HELP_CONTEXT_MESSAGES", "30"))
-            except ValueError:
-                ctx_limit = 30
-            pruned_history = history if ctx_limit <= 0 else history[-ctx_limit:]
-
-            from capture_help.persona import build_system_prompt
-            active_prompt = build_system_prompt(cached_system_prompt)
-
-            try:
-                provider = get_provider()
-                current_prov = getattr(provider, "provider_type", settings.default_provider)
-                if current_prov == "deepseek" and (not settings.deepseek_api_key or len(settings.deepseek_api_key) < 10 or "test" in settings.deepseek_api_key.lower()):
-                    console.print("\n[bold yellow]⚠️ DeepSeek API Key is invalid or not set.[/bold yellow]")
-                    console.print("[bold green]🥇 Automatically switching to 100% FREE Local Google Gemma 3 12B (Ollama)![/bold green]\n")
-                    save_config(api_key="", provider="ollama", model="gemma3:12b", keep_key=True)
-                    provider = get_provider()
-                gen = provider.stream_completion(messages=pruned_history, system_prompt=active_prompt)
-                assistant_reply, stats = stream_response(gen, console)
-            except SystemExit:
-                # Provider failure (already explained on screen). Keep the
-                # session alive instead of killing the whole chat.
-                console.print("[dim]Fix the provider issue above, then keep chatting.[/dim]")
-                history = history[:-1]
-                continue
-            except Exception as e:
-                err_str = str(e)
-                if "401" in err_str or "Authentication" in err_str or "invalid" in err_str.lower():
-                    console.print("\n[bold yellow]⚠️ DeepSeek API key authentication failed. Self-healing fallback to 100% FREE Local Google Gemma 3 12B (Ollama)...[/bold yellow]\n")
-                    save_config(api_key="", provider="ollama", model="gemma3:12b", keep_key=True)
-                    provider = get_provider()
-                    gen = provider.stream_completion(messages=pruned_history, system_prompt=active_prompt)
-                    assistant_reply, stats = stream_response(gen, console)
-                else:
-                    console.print(f"[bold red]API Error:[/bold red] {err_str}")
-                    continue
-
-            if stats:
-                render_cache_stats(stats.cache_hit_tokens, stats.prompt_tokens)
-
-            # Multi-turn Autonomous Tool Execution Loop (up to 10 consecutive tool turns)
-            max_tool_turns = 10
-            turn_count = 0
-            curr_reply = assistant_reply
-
-            while turn_count < max_tool_turns:
-                executed, tool_out = check_and_execute_agent_tools(curr_reply)
-                clean_reply = clean_dsml_response(curr_reply)
-
-                if turn_count == 0 or clean_reply:
-                    history.append({"role": "assistant", "content": clean_reply or curr_reply})
-                    save_session(sess_id, history)
-
-                if not executed:
-                    break
-
-                turn_count += 1
-                if turn_count >= max_tool_turns:
-                    console.print("\n[dim]Reached maximum autonomous tool execution depth (10 turns).[/dim]")
-                    break
-
-                console.print(f"\n[bold cyan]🔄 [Turn {turn_count}/{max_tool_turns}] Continuing Autonomous Task Execution...[/bold cyan]")
-
-                history.append({"role": "user", "content": f"Tool Output:\n{tool_out[:20_000]}"})
-                pruned_history_loop = history if ctx_limit <= 0 else history[-ctx_limit:]
-
-                gen_loop = provider.stream_completion(messages=pruned_history_loop, system_prompt=active_prompt)
-                try:
-                    curr_reply, stats_loop = stream_response(gen_loop, console)
-                except SystemExit:
-                    console.print("[dim]Tool-loop aborted due to a provider error (see above).[/dim]")
-                    break
-                if stats_loop:
-                    render_cache_stats(stats_loop.cache_hit_tokens, stats_loop.prompt_tokens)
-
-        except (KeyboardInterrupt, EOFError):
-            if history:
-                save_session(sess_id, history)
-                console.print(f"\n[dim]Session saved (ID: {sess_id}). Session terminated.[/dim]")
-            else:
-                console.print("\n[dim]Session terminated.[/dim]")
-            sys.exit(0)
+    CaptureHelpApp(initial_messages=initial_messages, session_id=session_id).run()

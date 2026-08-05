@@ -51,6 +51,7 @@ from capture_help.commands.memory_cmd import app as memory_app
 from capture_help.commands.profile import profile_command
 from capture_help.commands.summarize import summarize_command
 from capture_help.commands.hermes import app as hermes_app
+from capture_help.commands.mcp_cmd import app as mcp_app
 
 app = typer.Typer(
     name=__app_name__,
@@ -356,6 +357,7 @@ app.add_typer(arch_app, name="arch", help="Arch Linux power-user tools (Pacman, 
 app.add_typer(memory_app, name="memory", help="Manage background learned rules and user memory preferences.")
 app.add_typer(memory_app, name="learn", help="Alias for 'memory': Teach capture-help new background rules.")
 app.add_typer(hermes_app, name="hermes", help="Nous Research Hermes Agent self-improving subcommands (distill, recall, nudge, persona, daemon).")
+app.add_typer(mcp_app, name="mcp", help="Model Context Protocol server & client integration.")
 
 @app.command("gpu")
 def gpu():
@@ -443,8 +445,10 @@ def key(
     api_key: str = typer.Argument(..., help="DeepSeek API key to set for capture-help")
 ):
     """Set DeepSeek API key in one quick command (e.g. capture-help key sk-xxxx)."""
+    from capture_help.config import save_config
+    from rich.console import Console as RichConsole
     save_config(api_key=api_key, provider="deepseek")
-    console.print("[bold green]✓ Saved DeepSeek API key cleanly![/bold green]")
+    RichConsole().print("[bold green]✓ Saved DeepSeek API key cleanly![/bold green]")
 
 @app.command("skills")
 def skills():

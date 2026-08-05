@@ -48,3 +48,6 @@ skills/
 .config/
 .capture-help/
 secrets/
+
+# Local training data (not committed)
+rika/

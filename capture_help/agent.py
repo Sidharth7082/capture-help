@@ -26,7 +26,8 @@ Available Tool Commands:
 - TOOL_RUN: <command to execute in bash>
 - TOOL_READ: <filepath to read>
 - TOOL_WRITE: <filepath to write>
-- TOOL_SEARCH: <query to search codebase>"""
+- TOOL_SEARCH: <query to search codebase>
+- TOOL_MCP: <server_name>.<tool_name> | <json args> (call an external MCP tool, e.g. TOOL_MCP: files.read_file | {"path": "/tmp/notes.txt"})"""
 
 def clean_tool_cmd(cmd: str) -> str:
     """Safely strip outer wrapping quotes or backticks without destroying internal/closing shell quotes."""
@@ -149,6 +150,21 @@ def agent_search_codebase(query: str) -> str:
         result += f"\nFile: {file_path.name} (Score: {score:.2f})\nSnippet:\n{text[:1500]}\n"
     return result
 
+def agent_mcp_call(server_name: str, tool_name: str, args: Optional[str] = None) -> str:
+    """Invoke an external MCP tool (registered via 'capture-help mcp add')."""
+    from capture_help.mcp.client import call_tool
+
+    arguments = None
+    if args and args.strip():
+        try:
+            import json
+            arguments = json.loads(args)
+            if not isinstance(arguments, dict):
+                arguments = {"args": arguments}
+        except json.JSONDecodeError:
+            return f"Error: invalid JSON arguments for MCP call '{server_name}.{tool_name}': {args}"
+    return call_tool(server_name, tool_name, arguments)
+
 def clean_dsml_response(text: str) -> str:
     """Clean raw DSML or tool XML tags from display response text."""
     text = re.sub(r"<\|\s*\|\s*DSML\s*\|\s*\|\s*tool_calls>.*?</\|\s*\|\s*DSML\s*\|\s*\|\s*tool_calls>", "", text, flags=re.DOTALL)
@@ -210,6 +226,14 @@ def check_and_execute_agent_tools(response_text: str) -> Tuple[bool, str]:
         content = code_block.group(1) if code_block else ""
         res = agent_write_file(path, content)
         output_log += f"\n[Tool Result WRITE_FILE '{path}']:\n{res}\n"
+        tool_executed = True
+
+    # 6. TOOL_MCP: server.tool | json args (external MCP servers via 'capture-help mcp')
+    mcp_matches = re.findall(r"TOOL_MCP:\s*([\w.-]+)\.([\w.-]+)(?:\s*\|\s*(\{[^}]*\}|\S+))?", response_text, re.IGNORECASE)
+    for server_name, tool_name, args in mcp_matches:
+        console.print(f"[bold cyan]🔧 Executing Tool: MCP Call '{server_name}.{tool_name}'[/bold cyan]")
+        res = agent_mcp_call(server_name, tool_name, args)
+        output_log += f"\n[Tool Result MCP '{server_name}.{tool_name}']:\n{res}\n"
         tool_executed = True
 
     return tool_executed, output_log

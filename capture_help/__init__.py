@@ -11,7 +11,7 @@ def _get_version() -> str:
         from importlib.metadata import version
         return version(__app_name__)
     except Exception:
-        return "3.2.0"
+        return "3.3.0"
 
 
 __version__ = _get_version()

@@ -21,6 +21,7 @@ def isolated_config(tmp_path, monkeypatch):
     in so persona-dependent tests still find them.
     """
     import capture_help.persona as persona_mod
+    import capture_help.mcp.config as mcp_config
 
     real_config_dir = config_mod.CONFIG_DIR
     real_personas_dir = persona_mod.PERSONAS_DIR
@@ -31,6 +32,7 @@ def isolated_config(tmp_path, monkeypatch):
     monkeypatch.setattr(persona_mod, "CONFIG_DIR", cfg)
     monkeypatch.setattr(persona_mod, "PERSONAS_DIR", cfg / "personas")
     monkeypatch.setattr(persona_mod, "ACTIVE_PERSONA_FILE", cfg / "active_persona")
+    monkeypatch.setattr(mcp_config, "MCP_CONFIG_FILE", cfg / "mcp.json")
 
     if real_personas_dir.exists():
         shutil.copytree(real_personas_dir, cfg / "personas", dirs_exist_ok=True)

@@ -1,4 +1,5 @@
 import subprocess
+from typing import Optional
 from rich.console import Console
 
 from capture_help.deepseek import get_provider

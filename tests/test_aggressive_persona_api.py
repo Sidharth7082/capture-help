@@ -39,7 +39,7 @@ def test_aggressive_persona_switching_matrix():
 def test_provider_auto_routing_and_config():
     # Test Cloud model auto-routing
     provider_cloud = DeepSeekProvider(
-        api_key="sk-18347c3a1076405aad5031f3d299c751",
+        api_key="sk-test-00000000000000000000",
         base_url="http://localhost:11434/v1",
         model="deepseek-v4-flash",
     )

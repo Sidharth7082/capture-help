@@ -1,0 +1,620 @@
+/* =========================================================
+   Capture Help — MyGlass frosted-glass theme
+   Layered surfaces, soft accents, floating panels.
+   (This Textual build has no border-radius/text-shadow, so
+   the "glass" look comes from layered backgrounds, soft
+   borders and opacity.)
+   ========================================================= */
+
+Screen {
+    background: #0d1017;
+    /* Layer stack (bottom -> top): wallpaper, dark overlay, glass UI.
+       Textual's own loading / toast / tooltip layers sit above "ui". */
+    layers: wallpaper overlay ui;
+}
+
+/* ---------- Background & dark-overlay layers (beneath all UI) ----------
+   The wallpaper is the deepest opaque surface; the dark overlay dims it and
+   sits between it and the glass UI. Both are absolute and never reflow the
+   layout, and the UI panels above them are opaque, so nothing can ever bleed
+   through the content. */
+#wallpaper {
+    layer: wallpaper;
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: #0a0d13;
+}
+
+#dark-overlay {
+    layer: overlay;
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.45);
+}
+
+/* ---------- Header (hero) ---------- */
+#app-header {
+    layer: ui;
+    background: #12161f;
+    border-bottom: solid #1b2230;
+    height: auto;
+    padding: 1 2 2 2;
+}
+
+#hero-title-block {
+    height: auto;
+}
+
+#app-title {
+    color: #e8edf4;
+    text-style: bold;
+}
+
+#app-subtitle {
+    color: #63c6e2;
+    text-style: bold;
+}
+
+#app-tagline {
+    color: #5d6878;
+    margin: 0 0 1 0;
+}
+
+/* Workspace info grid */
+#workspace-grid {
+    height: auto;
+    grid-size: 5;
+    grid-columns: 1fr 1fr 1fr 1fr 1fr;
+    grid-gutter: 1 2;
+}
+
+.wp-field {
+    height: auto;
+    background: #161b26;
+    border: round #1d2432;
+    padding: 0 1 0 1;
+    min-height: 3;
+}
+
+.wp-label {
+    color: #5d6878;
+    text-style: bold;
+}
+
+.wp-value {
+    color: #e8edf4;
+}
+
+.wp-accent {
+    color: #63c6e2;
+}
+
+.wp-git-clean {
+    color: #4ed98c;
+}
+
+.wp-git-dirty {
+    color: #e5b95c;
+}
+
+/* ---------- Body split ---------- */
+#body {
+    layer: ui;
+    height: 1fr;
+}
+
+/* ---------- Sidebar ---------- */
+#sidebar {
+    background: #11151d;
+    border-right: solid #1b2230;
+    width: 30;
+    padding: 1 1 1 1;
+}
+
+.sidebar-section {
+    background: #161b26;
+    border: round #1d2432;
+    padding: 0 1 0 1;
+    margin: 0 0 1 0;
+    height: auto;
+}
+
+.sidebar-section-title {
+    color: #63c6e2;
+    text-style: bold;
+}
+
+.sidebar-item {
+    color: #8f9aa9;
+    padding: 0 0 0 1;
+}
+
+.sidebar-item:hover {
+    color: #e8edf4;
+    background: #1d2432;
+}
+
+.sidebar-section OptionList {
+    background: transparent;
+    border: none;
+    height: auto;
+}
+
+.sidebar-section OptionList > .option-list--option {
+    color: #8f9aa9;
+}
+
+.sidebar-section OptionList > .option-list--option:hover,
+.sidebar-section OptionList > .option-list--option-selected {
+    background: #1d2432;
+    color: #e8edf4;
+}
+
+/* ---------- Chat column ---------- */
+#chat-column {
+    height: 1fr;
+}
+
+#chat {
+    height: 1fr;
+    background: #0a0d13;
+    padding: 1 2 1 2;
+    scrollbar-background: #171c28;
+    scrollbar-color: #3a7d92;
+    transition: opacity 220ms linear;
+}
+
+/* ---------- Chat messages ---------- */
+.chat-message {
+    height: auto;
+    margin: 0 0 1 0;
+    transition: opacity 250ms linear;
+}
+
+.chat-message.enter {
+    opacity: 0;
+}
+
+.bubble {
+    height: auto;
+    max-width: 82%;
+    padding: 1 2 1 2;
+    background: #161b26;
+}
+
+/* User bubble — right aligned */
+.role-user {
+    align-horizontal: right;
+}
+
+.role-user .bubble {
+    background: #1c3140;
+    border: round #2c4a5c;
+}
+
+.role-user .bubble Markdown,
+.role-user .bubble * {
+    background: transparent;
+}
+
+/* Assistant bubble — left aligned glass card */
+.role-assistant {
+    align-horizontal: left;
+}
+
+.role-assistant .bubble {
+    background: #161b26;
+    border: round #1d2432;
+    color: #e8edf4;
+}
+
+.role-assistant .bubble Markdown {
+    background: transparent;
+}
+
+/* Tool execution card */
+.role-tool {
+    align-horizontal: left;
+}
+
+.role-tool .bubble {
+    background: #181d29;
+    border: round #232b3c;
+    color: #a9b4c2;
+    max-width: 100%;
+}
+
+/* Error / warning cards */
+.role-error {
+    align-horizontal: left;
+}
+
+.role-error .bubble {
+    background: #241419;
+    border: round #4a2330;
+    color: #f2556f;
+    max-width: 100%;
+}
+
+.role-warning {
+    align-horizontal: left;
+}
+
+.role-warning .bubble {
+    background: #241d10;
+    border: round #4a3c1d;
+    color: #e5b95c;
+    max-width: 100%;
+}
+
+.role-system {
+    align-horizontal: center;
+}
+
+.role-system .bubble {
+    background: transparent;
+    border: none;
+    color: #5d6878;
+    max-width: 100%;
+}
+
+/* Thinking row */
+#thinking-row {
+    height: 1;
+    margin: 0 0 1 0;
+    background: #151a24;
+    border: round #1d2432;
+    padding: 0 1 0 1;
+}
+
+#thinking-label {
+    color: #63c6e2;
+    text-style: bold;
+}
+
+/* ---------- Input ---------- */
+#input-area {
+    height: auto;
+    background: #12161f;
+    border-top: solid #1b2230;
+    padding: 1 2 1 2;
+}
+
+#prompt-input {
+    background: #171c28;
+    border: round #2c4a5c;
+    color: #e8edf4;
+    padding: 0 2 0 2;
+    height: 3;
+}
+
+#prompt-input:focus {
+    border: round #63c6e2;
+}
+
+#prompt-hints {
+    color: #5d6878;
+    padding: 0 0 0 1;
+}
+
+/* ---------- Slash-command popup ---------- */
+#slash-popup {
+    display: none;
+    height: auto;
+    max-height: 12;
+    background: #161b29;
+    border: round #2c4a5c;
+    margin: 0 0 1 0;
+}
+
+#slash-options {
+    height: auto;
+    max-height: 11;
+    padding: 0;
+}
+
+#slash-options > .option-list--option {
+    color: #c7d3e0;
+    padding: 0 2 0 2;
+    text-style: none;
+}
+
+#slash-options > .option-list--option--highlight {
+    background: #223047;
+    color: #63c6e2;
+}
+
+#slash-options:focus {
+    border: none;
+}
+
+/* ---------- Status footer ---------- */
+#status-footer {
+    layer: ui;
+    background: #11151d;
+    border-top: solid #1b2230;
+    height: 2;
+    padding: 0 1 0 1;
+    align-vertical: middle;
+}
+
+.status-item {
+    color: #8f9aa9;
+    padding: 0 0 0 1;
+}
+
+.status-spacer {
+    width: 1fr;
+    height: auto;
+}
+
+.status-item.model {
+    color: #63c6e2;
+}
+
+.status-item.model:hover {
+    text-style: underline;
+    color: #8fd8f2;
+}
+
+.status-item.git-clean {
+    color: #4ed98c;
+}
+
+.status-item.git-dirty {
+    color: #e5b95c;
+}
+
+.status-item.version {
+    color: #5d6878;
+}
+
+.status-item.cost .value {
+    color: #4ed98c;
+}
+
+.status-item.state-streaming .value {
+    color: #e5b95c;
+}
+
+/* ---------- Landing screen (empty state) ---------- */
+#landing {
+    display: block;
+    height: 1fr;
+    padding: 2 4 1 4;
+    overflow-y: auto;
+    scrollbar-background: #171c28;
+    scrollbar-color: #3a7d92;
+    transition: opacity 220ms linear;
+}
+
+#landing-question {
+    color: #e8edf4;
+    text-style: bold;
+    text-align: center;
+    margin: 0 0 0 0;
+}
+
+#landing-sub {
+    color: #5d6878;
+    text-align: center;
+    margin: 0 0 2 0;
+}
+
+#example-row {
+    height: auto;
+    grid-size: 4;
+    grid-columns: 1fr 1fr 1fr 1fr;
+    grid-gutter: 1;
+    margin: 0 0 1 0;
+}
+
+.chip {
+    background: #171c28;
+    border: round #232b3c;
+    color: #a9b4c2;
+    padding: 0 1 0 1;
+    height: 3;
+    min-width: 0;
+}
+
+.chip:hover {
+    background: #2c4a5c;
+    border: round #63c6e2;
+    color: #e8edf4;
+}
+
+.chip:focus {
+    border: round #63c6e2;
+    color: #e8edf4;
+}
+
+.section-label {
+    color: #63c6e2;
+    text-style: bold;
+    text-align: center;
+    margin: 1 0 1 0;
+}
+
+#qa-grid {
+    height: auto;
+    grid-size: 3;
+    grid-columns: 1fr 1fr 1fr;
+    grid-gutter: 1;
+    margin: 0 0 1 0;
+    align-horizontal: center;
+    width: 70%;
+}
+
+.qa-btn {
+    background: #161b26;
+    border: round #1d2432;
+    color: #e8edf4;
+    padding: 0 1 0 1;
+    height: 3;
+}
+
+.qa-btn:hover {
+    background: #2c4a5c;
+    border: round #63c6e2;
+    color: #e8edf4;
+}
+
+.qa-btn:focus {
+    border: round #63c6e2;
+    color: #e8edf4;
+    text-style: bold;
+}
+
+.landing-columns {
+    height: auto;
+    width: 100%;
+    margin: 0 0 1 0;
+}
+
+.landing-col .section-label {
+    text-align: left;
+}
+
+.landing-col {
+    width: 1fr;
+    min-width: 18;
+    height: auto;
+    background: #12161f;
+    border: round #1d2432;
+    padding: 0 1 0 1;
+    margin: 0 1 0 0;
+    min-height: 5;
+}
+
+#landing-recent {
+    background: transparent;
+    border: none;
+    height: auto;
+    width: 100%;
+    max-height: 10;
+}
+
+#landing-recent > .option-list--option {
+    color: #8f9aa9;
+}
+
+#landing-recent > .option-list--option:hover,
+#landing-recent > .option-list--option-selected {
+    background: #1d2432;
+    color: #e8edf4;
+}
+
+.landing-file-item {
+    color: #8f9aa9;
+    padding: 0 0 0 1;
+}
+
+.landing-file-item:hover {
+    color: #e8edf4;
+    background: #1d2432;
+}
+
+/* ---------- Debug panel (collapsible, right side) ---------- */
+#debug-panel {
+    display: none;
+    width: 46;
+    background: #0f131a;
+    border-left: solid #1b2230;
+}
+
+#debug-panel Collapsible {
+    height: 1fr;
+}
+
+#debug-log {
+    height: 1fr;
+    background: #0d1017;
+    padding: 0 1 0 1;
+}
+
+/* ---------- Modal screens ---------- */
+ModalScreen {
+    align: center middle;
+    background: rgba(0, 0, 0, 0.65);
+}
+
+.modal-card {
+    background: #161b26;
+    border: round #2c4a5c;
+    width: 70;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2 1 2;
+}
+
+.modal-title {
+    color: #63c6e2;
+    text-style: bold;
+    text-align: center;
+    margin: 0 0 1 0;
+}
+
+.modal-card OptionList {
+    border: round #1d2432;
+    background: #12161f;
+    height: auto;
+    max-height: 22;
+}
+
+.modal-card OptionList > .option-list--option {
+    color: #8f9aa9;
+}
+
+.modal-card OptionList > .option-list--option:hover {
+    background: #1d2432;
+    color: #e8edf4;
+}
+
+.modal-card OptionList > .option-list--option-selected {
+    background: #2c4a5c;
+    color: #e8edf4;
+    text-style: bold;
+}
+
+.modal-card .modal-hint {
+    color: #5d6878;
+    text-align: center;
+    margin: 1 0 0 0;
+}
+
+.modal-card .modal-buttons {
+    height: 3;
+    margin: 1 0 0 0;
+    align-horizontal: center;
+    align-vertical: middle;
+}
+
+.modal-card .modal-buttons Button {
+    margin: 0 1 0 1;
+}
+
+/* ---------- Buttons ---------- */
+Button {
+    background: #1d2432;
+    color: #e8edf4;
+    border: round #232b3c;
+}
+
+Button:hover {
+    background: #2c4a5c;
+    border: round #63c6e2;
+}
+
+Button:focus {
+    border: round #63c6e2;
+}
+
+/* ---------- Notifications ---------- */
+.notification {
+    background: #161b26;
+    border: round #63c6e2;
+    color: #e8edf4;
+}

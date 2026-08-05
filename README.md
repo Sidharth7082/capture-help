@@ -34,6 +34,7 @@
   - [⚡ Productivity & Utilities](#4-productivity--utilities)
 - [💡 Workflow Examples](#-workflow-examples)
 - [🎭 Personas & Customization](#-personas--customization)
+- [🤝 Model Context Protocol (MCP)](#-model-context-protocol-mcp)
 - [⌨️ Shell Aliases](#-shell-aliases)
 - [📜 License](#-license)
 
@@ -206,6 +207,47 @@ CAPTURE_HELP_REDACT_SECRETS=true
 
 ---
 
+### 5. Model Context Protocol (`capture-help mcp`)
+
+Connect capture-help to the wider MCP ecosystem in both directions.
+
+```bash
+# Install the optional SDK extra
+pip install 'capture-help[mcp]'
+```
+
+**Server mode** — expose capture-help as MCP tools for any MCP client
+(Claude Desktop, Cursor, opencode, nvim-mcp, etc.):
+
+```bash
+capture-help mcp serve                        # stdio transport (default)
+capture-help mcp serve --transport http --port 8765   # remote Streamable HTTP
+```
+
+Exposed tools: `search_codebase`, `read_file`, `get_git_diff`,
+`fingerprint_project`, `scan_secrets`, `web_search`, `summarize`,
+`run_command` (always requires interactive confirmation).
+
+**Client mode** — register external MCP servers and drive their tools:
+
+```bash
+capture-help mcp add files --command "npx -y @modelcontextprotocol/server-filesystem /tmp"
+capture-help mcp add github --url http://localhost:8888/mcp
+capture-help mcp list                          # show registered servers
+capture-help mcp tools                         # discover all tool signatures
+capture-help mcp ping files                    # connectivity check
+capture-help mcp call files read_file --args '{"path": "/tmp/notes.txt"}'
+capture-help mcp remove files
+```
+
+**Agent integration** — the chat / hermes agent can call any registered MCP
+tool directly. Once servers are added, chat auto-injects the available tool
+list into the system prompt, and you (or the agent) can emit:
+
+```
+TOOL_MCP: files.read_file | {"path": "README.md"}
+```
+
 ## 💡 Workflow Examples
 
 ### 1. Codebase QA with Precise Citations
@@ -314,6 +356,24 @@ capture-help chat --persona aggressive
 ```
 
 Within chat, use `/persona` to switch live (`/persona gehrman`, `/persona 1`, `/persona reset`).
+
+### GUI Keyboard Shortcuts & Slash Commands
+
+The glass desktop chat (`capture-help chat --gui`) is fully keyboard-driven:
+
+| Key | Action |
+| :--- | :--- |
+| `/` | Type a `/` in the prompt to pop up the slash-command autocomplete; filter as you type, use `↑`/`↓` to navigate, `Tab` to fill, `Esc` to dismiss |
+| `Enter` | Run the highlighted command or send the message |
+| `Ctrl+Shift+M` | Open the model picker (DeepSeek ↔ Ollama/Gemma) |
+| `Ctrl+P` | Open the persona picker |
+| `Ctrl+K` | Search the codebase |
+| `Ctrl+L` | Clear the chat |
+| `Ctrl+D` | Toggle the debug panel |
+| `Ctrl+N` | New chat |
+| `Ctrl+C` | Cancel generation / quit |
+
+The model name in the bottom status bar is clickable and opens the model picker.
 
 ### Longer, Uninterrupted Answers
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Generator, Any
 
 from rich.console import Console
+from rich import box
 from rich.panel import Panel
 from rich.live import Live
 from rich.markdown import Markdown
@@ -16,14 +17,26 @@ from rich.prompt import Confirm
 from rich.syntax import Syntax
 from rich.table import Table
 
-from capture_help.project import fingerprint_project, find_project_root
+from capture_help.project import fingerprint_project, find_project_root, load_ignore_patterns
+
+# MyGlass frosted palette shared with the Textual GUI (see gui/theme.py).
+_BASE = "#0d1017"
+_SURFACE_1 = "#12161f"
+_SURFACE_2 = "#171c28"
+_EDGE = "#232b3c"
+_TEXT = "#e8edf4"
+_MUTED = "#8f9aa9"
+_ACCENT = "#63c6e2"
+_SUCCESS = "#4ed98c"
+_WARNING = "#e5b95c"
+_ERROR = "#f2556f"
 
 custom_theme = Theme({
-    "info": "cyan",
-    "warning": "yellow",
-    "error": "bold red",
-    "success": "bold green",
-    "brand": "bold cyan",
+    "info": _ACCENT,
+    "warning": _WARNING,
+    "error": f"bold {_ERROR}",
+    "success": f"bold {_SUCCESS}",
+    "brand": f"bold {_ACCENT}",
 })
 
 console = Console(theme=custom_theme)
@@ -31,27 +44,74 @@ console = Console(theme=custom_theme)
 def get_console() -> Console:
     return console
 
+def collect_directory_info(directory: Path) -> Dict[str, Any]:
+    """Gather language/file/line statistics for a project directory.
+
+    Used by `capture-help review` on directory targets.
+    """
+    directory = directory.resolve()
+    ignore_patterns = load_ignore_patterns(directory)
+    lang_extensions = {
+        ".cpp": "C++", ".hpp": "C++", ".c": "C", ".h": "C/C++",
+        ".py": "Python", ".js": "JavaScript", ".ts": "TypeScript",
+        ".jsx": "React JSX", ".tsx": "React TSX", ".rs": "Rust",
+        ".go": "Go", ".java": "Java", ".qml": "Qt QML",
+        ".lua": "Lua", ".sh": "Shell", ".css": "CSS", ".html": "HTML",
+    }
+
+    languages: Dict[str, int] = {}
+    files: List[Path] = []
+    total_lines = 0
+    total_files = 0
+
+    for r, dirs, names in os.walk(directory):
+        dirs[:] = [d for d in dirs if d not in ignore_patterns and not any(ign in d for ign in ignore_patterns)]
+        for name in names:
+            p = Path(r) / name
+            ext = p.suffix.lower()
+            if ext not in lang_extensions:
+                continue
+            files.append(p)
+            total_files += 1
+            lang = lang_extensions[ext]
+            languages[lang] = languages.get(lang, 0) + 1
+            try:
+                with open(p, "r", encoding="utf-8", errors="ignore") as fo:
+                    total_lines += sum(1 for _ in fo)
+            except Exception:
+                pass
+
+    files.sort(key=lambda p: p.name.lower())
+    primary_language = max(languages, key=languages.get) if languages else "Unknown"
+
+    return {
+        "primary_language": primary_language,
+        "total_files": total_files,
+        "total_lines": total_lines,
+        "languages": languages,
+        "files": files,
+    }
+
 def print_header(title: str, subtitle: Optional[str] = None):
     from capture_help import __version__
-    text = f"[bold cyan]⚡ capture-help v{__version__}[/bold cyan] │ [bold white]{title}[/bold white]"
+    text = f"[bold {_ACCENT}]⚡ Capture Help[/bold {_ACCENT}]  [bold {_TEXT}]{title}[/bold {_TEXT}]  [dim]v{__version__}[/dim]"
     if subtitle:
         text += f"\n[dim]{subtitle}[/dim]"
-    console.print(Panel(text, border_style="cyan", expand=False))
+    console.print(Panel(text, border_style=_EDGE, box=box.ROUNDED, expand=False))
 
 def render_project_badge() -> Dict[str, Any]:
     info = fingerprint_project()
     langs_str = ", ".join(info["languages"]) if info["languages"] else "Generic"
     build_str = ", ".join(info["build_systems"]) if info["build_systems"] else "N/A"
-    git_str = "[green]Clean[/green]" if info["git_clean"] else "[yellow]Modified[/yellow]"
+    git_str = f"[{_SUCCESS}]✓ Clean[/{_SUCCESS}]" if info["git_clean"] else f"[{_WARNING}]✗ Modified[/{_WARNING}]"
 
     badge = (
-        f"[bold cyan]🧠 Project Intelligence:[/bold cyan] "
-        f"[bold white]{info['name']}[/bold white] │ "
-        f"Langs: [yellow]{langs_str}[/yellow] │ "
-        f"Build: [green]{build_str}[/green] │ "
-        f"Git: {git_str}"
+        f"[{_ACCENT}]▤ Project:[/{_ACCENT}] [bold {_TEXT}]{info['name']}[/bold {_TEXT}]"
+        f"   [{_ACCENT}]λ[/{_ACCENT}] [{_MUTED}]{langs_str}[/{_MUTED}]"
+        f"   [{_ACCENT}]◆[/{_ACCENT}] [{_MUTED}]{build_str}[/{_MUTED}]"
+        f"   [{_ACCENT}]⎇[/{_ACCENT}] {git_str}"
     )
-    console.print(Panel(badge, border_style="dim white", expand=False))
+    console.print(Panel(badge, border_style=_EDGE, box=box.ROUNDED, expand=False))
     return info
 
 def read_stdin_or_file(filepath_or_arg: Optional[str] = None, max_bytes: int = 500_000) -> Tuple[str, Optional[Path], str]:
@@ -156,12 +216,14 @@ def print_token_usage(stats: Any):
     if not stats:
         return
     text = (
-        f"⚡ [dim]Time: [white]{stats.duration_seconds:.1f}s[/white] │ "
-        f"Tokens: [white]{stats.total_tokens:,}[/white] (in: {stats.prompt_tokens}, out: {stats.completion_tokens}) │ "
-        f"Cost: [bold green]~${stats.cost_usd:.5f}[/bold green] │ "
-        f"Model: [white]{stats.model}[/white][/dim]"
+        f"[{_ACCENT}]🧠[/{_ACCENT}] [{_MUTED}]{stats.model}[/{_MUTED}]"
+        f"   [{_ACCENT}]▦[/{_ACCENT}] [{_MUTED}]{stats.total_tokens:,} tokens[/{_MUTED}]"
+        f"   [{_ACCENT}]⏱[/{_ACCENT}] [{_MUTED}]{stats.duration_seconds:.1f}s[/{_MUTED}]"
+        f"   [{_ACCENT}]¢[/{_ACCENT}] [bold {_SUCCESS}]~${stats.cost_usd:.5f}[/bold {_SUCCESS}]"
     )
-    console.print(Panel(text, border_style="dim cyan", expand=False))
+    if getattr(stats, "cache_hit_tokens", 0):
+        text += f"   [{_ACCENT}]⚡[/{_ACCENT}] [{_MUTED}]cache {stats.cache_hit_tokens}[/{_MUTED}]"
+    console.print(text)
 
 def prompt_apply_patch(filepath: Path, original_code: str, new_code: str):
     if original_code.strip() == new_code.strip():
