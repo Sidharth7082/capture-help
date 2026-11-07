@@ -108,6 +108,46 @@ class SearchModal(BaseModal):
         self.dismiss(event.value.strip())
 
 
+class ContextViewerScreen(BaseModal):
+    """What the model currently has in context: session, open files, usage."""
+
+    def __init__(
+        self,
+        session_id: str = "",
+        title: str = "",
+        open_files: Optional[List[str]] = None,
+        prompt_tokens: int = 0,
+        window_tokens: int = 0,
+        history_chars: int = 0,
+        **kwargs,
+    ):
+        super().__init__("Context", **kwargs)
+        self.session_id = session_id
+        self.title = title
+        self.open_files = open_files or []
+        self.prompt_tokens = prompt_tokens
+        self.window_tokens = window_tokens
+        self.history_chars = history_chars
+
+    def compose(self) -> ComposeResult:
+        est = self.history_chars // 4
+        pct = int(self.prompt_tokens / self.window_tokens * 100) if self.window_tokens else 0
+        lines = [
+            f"Session: {self.session_id}",
+            f"Title:   {self.title or '—'}",
+            "",
+            f"Token usage: {self.prompt_tokens:,} / {self.window_tokens:,}  ({pct}%)",
+            f"History: ~{est:,} tokens in the conversation",
+            "",
+            "Open files:",
+        ]
+        lines += [f"  ▸ {f}" for f in self.open_files[:20]] or ["  (none yet)"]
+        with Vertical(classes="modal-card"):
+            yield Label("🧠 Context", classes="modal-title")
+            yield Static("\n".join(lines), markup=False)
+            yield Label("Esc to close", classes="modal-hint")
+
+
 class SlashHelpScreen(BaseModal):
     """Overview of available slash commands."""
 

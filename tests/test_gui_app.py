@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -64,7 +65,7 @@ def test_streaming_updates_history_and_footer():
     async def scenario():
         app = CaptureHelpApp()
         async with app.run_test() as pilot:
-            app._get_provider = lambda: FakeProvider()
+            app._get_provider = lambda notify_fallback=True: FakeProvider()
             app._send("Say hello")
             for _ in range(100):
                 if app._gen_worker is not None and app._gen_worker.is_finished:
@@ -506,11 +507,656 @@ def test_sidebar_recent_chats_are_enriched(monkeypatch):
                 {"id": "1", "title": "Fix build error", "turns": 3, "timestamp": time.time() - 120},
                 {"id": "2", "title": "Add feature", "turns": 1, "timestamp": time.time()},
             ]
-            sidebar.set_recent_chats(sessions)
+            sidebar.set_recent_chats(sessions, active_id="2")
             await pilot.pause()
             opts = list(sidebar.recent_list.options)
             assert len(opts) == 2
             assert "🐛" in str(opts[0].prompt)
             assert "min ago" in str(opts[0].prompt)
+            # the active conversation is marked with ▌ and bold cyan
+            active = str(opts[1].prompt)
+            assert "▌" in active
+            from rich.text import Text as RichText
+
+            assert isinstance(opts[1].prompt, RichText)
+            assert "bold" in str(opts[1].prompt.style) or "bold" in str(
+                next(iter(opts[1].prompt.spans), None)
+            )
+            assert "▌" not in str(opts[0].prompt)
+
+    asyncio.run(scenario())
+
+
+def test_sidebar_navigation_starts_chat_and_opens_search():
+    from capture_help.gui.modals import SearchModal
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert "Capture Help" in str(app.query_one(".sidebar-brand-title").render())
+            previous_session = app.sess_id
+            app.query_one("#sidebar-new-chat").press()
+            await pilot.pause()
+            assert app.sess_id != previous_session
+            assert app._in_home_view
+
+            app.query_one("#sidebar-search").press()
+            await pilot.pause()
+            assert isinstance(app.screen, SearchModal)
+
+    asyncio.run(scenario())
+
+
+# --------------------------------------------------------------------------- #
+# Chat UX: role identity, full-width bubbles, sublayers, thinking, code cards
+# --------------------------------------------------------------------------- #
+def test_chat_message_has_role_label_and_avatar():
+    from capture_help.gui.widgets import ROLE_AVATARS, ROLE_LABELS
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.add_message("user", "hello there")
+            app.add_message("assistant", "**hi**")
+            app.add_message("tool", "output", sublabel="🐚 Terminal")
+            await pilot.pause()
+            for role, label in (("user", "You"), ("assistant", "Capture Help"),
+                                ("tool", "Tool")):
+                set_of_role = app.query(f".role-{role}")
+                assert set_of_role, f"no .role-{role}"
+                msg = set_of_role[0]
+                assert msg.query_one(".msg-role") is not None
+            user_msg = app.query(".role-user")[0]
+            assert "You" in str(user_msg.query_one(".msg-role").render())
+            asst = app.query(".role-assistant")[0]
+            assert "Capture Help" in str(asst.query_one(".msg-role").render())
+
+    asyncio.run(scenario())
+
+
+def test_tool_message_carries_terminal_sublabel():
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.add_message("tool", "x", sublabel="🐚 Terminal")
+            await pilot.pause()
+            tool_msg = app.query(".role-tool")[0]
+            assert "🐚" in str(tool_msg.query_one(".msg-role").render())
+
+    asyncio.run(scenario())
+
+
+def test_code_fence_renders_language_and_line_numbers(monkeypatch):
+    """Assistant markdown code fences become numbered, labelled cards."""
+    from capture_help.gui.widgets import CodeMarkdown
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.add_message("assistant", "```python\nprint('x')\nprint('y')\n```")
+            await pilot.pause()
+            from capture_help.gui.widgets import CodeFence
+
+            fences = app.query(CodeFence)
+            assert len(fences) >= 1, "no CodeFence rendered"
+            fence = fences[0]
+            assert fence.query_one(".code-lang") is not None
+            content = str(fence._content_label.render())
+            assert "1" in content and "2" in content  # line numbers present
+            assert "print" in content
+
+
+def test_thinking_row_shows_stage_and_progress():
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._start_thinking()
+            await pilot.pause(0.5)
+            row = app.query_one("#thinking-row")
+            assert row.stage_label is not None
+            assert row.progress_label is not None
+            assert str(row.progress_label.render()).startswith("▰")
+            app._stop_thinking()
+            await pilot.pause()
+
+    asyncio.run(scenario())
+
+
+def test_workspace_summary_includes_branch(monkeypatch):
+    from capture_help.gui import widgets as w
+
+    monkeypatch.setattr(
+        w, "workspace_summary",
+        lambda p: {"modified": 8, "last_commit": "abc x", "todos": 770,
+                   "clean": True, "branch": "main"},
+    )
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            items = app.query_one("#workspace-items")
+            rows_text = " ".join(
+                str(lbl.render()) for row in items.children for lbl in row.children
+            )
+            assert "Branch" in rows_text
+            assert "main" in rows_text
+
+    asyncio.run(scenario())
+
+
+# --------------------------------------------------------------------------- #
+# Code-block actions: Copy / Insert buttons
+# --------------------------------------------------------------------------- #
+def test_code_fence_has_copy_and_insert_buttons():
+    """Code fences expose Copy (to clipboard) and Insert (into input) actions."""
+    from capture_help.gui.widgets import CodeFence
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.add_message("assistant", "```python\nprint('x')\n```")
+            await pilot.pause()
+            fence = app.query(CodeFence)[0]
+            assert fence.copy_btn is not None
+            assert fence.insert_btn is not None
+            fence.copy_btn.press()
+            await pilot.pause()
+            assert app._clipboard == "print('x')"
+            fence.insert_btn.press()
+            await pilot.pause()
+            assert app.query_one("#prompt-input").value == "print('x')"
+
+    asyncio.run(scenario())
+
+
+def test_diff_fence_renders_as_diff_card():
+    """A ```diff fence becomes a distinct card: filename header, +/- colours,
+    Copy action only (no Insert)."""
+    from capture_help.gui.widgets import CodeFence
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.add_message(
+                "assistant",
+                "```diff\n"
+                "--- a/Renderer.cpp\n"
+                "+++ b/Renderer.cpp\n"
+                "@@ -1,2 +1,2 @@\n"
+                "-old\n"
+                "+new\n"
+                "```",
+            )
+            await pilot.pause()
+            fence = app.query(CodeFence)[0]
+            assert fence._is_diff()
+            assert fence.query_one(".diff-card") is not None
+            assert "Renderer.cpp" in str(fence.query_one(".code-lang").render())
+            assert fence.copy_btn is not None
+            assert getattr(fence, "insert_btn", None) is None
+            styles = {str(s.style) for s in fence._content_label.content._spans}
+            assert "#f2556f" in styles  # removal
+            assert "#4ed98c" in styles  # addition
+            assert "bold #6aa9f0" in styles  # hunk
+            assert fence._content_label.content._text == (
+                "1 --- a/Renderer.cpp\n"
+                "2 +++ b/Renderer.cpp\n"
+                "3 @@ -1,2 +1,2 @@\n"
+                "4 -old\n"
+                "5 +new"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_diff_helpers_unit():
+    from capture_help.gui.widgets import diff_line_style, looks_like_diff
+
+    assert looks_like_diff("diff --git a/x b/x\n-old\n+new")
+    assert looks_like_diff("--- a/x\n+++ b/x\n-old\n+new")
+    assert not looks_like_diff("hello\n- not a diff\n+ 2 + 2 = 4")
+    assert looks_like_diff("") is False
+    assert diff_line_style("+new") == "#4ed98c"
+    assert diff_line_style("-old") == "#f2556f"
+    assert diff_line_style("@@ -1 +1 @@") == "bold #6aa9f0"
+    assert diff_line_style("+++ b/x") == "bold #8f9aa9"
+    assert diff_line_style("context") == "#5d6878"
+
+
+def test_tool_message_with_diff_content_uses_diff_colours():
+    from rich.text import Text as RichText
+    from textual.widgets import Static
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.add_message(
+                "tool",
+                "⎇ Git diff (4 lines)\n\ndiff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new",
+            )
+            await pilot.pause()
+            tool_msg = app.query(".role-tool")[-1]
+            statics = list(tool_msg.query(".bubble Static"))
+            assert len(statics) == 1
+            assert isinstance(statics[0].content, RichText)
+            styles = {str(s.style) for s in statics[0].content.spans}
+            assert "#4ed98c" in styles and "#f2556f" in styles
+            # Plain (non-diff) tool messages stay unstyled strings
+            app.add_message("tool", "⚡ ls\n\nfile1\nfile2")
+            await pilot.pause()
+            plain = app.query(".role-tool")[-1].query(".bubble Static")[0]
+            assert isinstance(plain.content, str)
+
+    asyncio.run(scenario())
+
+
+# --------------------------------------------------------------------------- #
+# AI-generated conversation titles
+# --------------------------------------------------------------------------- #
+def test_ai_generated_conversation_title():
+    """After the first reply, a background worker refines the session title
+    and the sidebar/session pick it up."""
+    from capture_help.history import list_sessions
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            app._get_provider = lambda notify_fallback=True: FakeProvider()
+            app._send("Say hello")
+            for _ in range(200):
+                if app._ai_title:
+                    break
+                await pilot.pause(0.05)
+            assert app._ai_title, "AI title was never applied"
+            assert "Hello" in app._ai_title
+            assert app._title_requested is True
+            saved = list_sessions()
+            assert saved and saved[0]["id"] == app.sess_id
+            assert saved[0]["title"] == app._ai_title
+
+    asyncio.run(scenario())
+
+
+def test_sanitize_title():
+    from capture_help.gui.app import CaptureHelpApp
+
+    assert CaptureHelpApp._sanitize_title('"Fix the build"') == "Fix the build"
+    assert CaptureHelpApp._sanitize_title("Title: Improve renderer.") == "Improve renderer"
+    assert CaptureHelpApp._sanitize_title("  Weather report: sunny ") == "Weather report: sunny"
+    assert CaptureHelpApp._sanitize_title("   ") == ""
+
+
+def test_title_provider_lookup_skips_fallback_side_effects(monkeypatch):
+    """The title worker builds its provider without re-notifying the missing-
+    key fallback (the generation worker already handled that)."""
+    monkeypatch.setenv("DEFAULT_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "invalid-test-key")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-chat")
+    from capture_help.gui.app import CaptureHelpApp
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            calls = []
+            app._fallback_to_local = lambda: calls.append(True)
+            provider = app._get_provider(notify_fallback=False)
+            assert provider is not None
+            assert calls == []  # no fallback notification fired
+            # The default path notifies, but only from a worker thread
+            # (call_from_thread is illegal on the app's own thread).
+            errs = []
+
+            def call_default():
+                try:
+                    app._get_provider()
+                except Exception as e:  # noqa: BLE001
+                    errs.append(e)
+
+            t = threading.Thread(target=call_default)
+            t.start()
+            t.join(timeout=5)
+            assert errs == []
+            await pilot.pause()
+            assert calls == [True]
+
+    asyncio.run(scenario())
+
+
+# --------------------------------------------------------------------------- #
+# UX polish: tighter user bubbles, live context, ✓ thinking stages
+# --------------------------------------------------------------------------- #
+def test_user_bubble_stays_compact():
+    """User bubbles auto-size tightly — one line in, one line out."""
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.add_message("user", "hello")
+            await pilot.pause()
+            bubble = app.query(".role-user")[0].query_one(".bubble")
+            assert bubble.size.height <= 2
+            # multi-paragraph messages don't gain the default 1-row gaps
+            # (with the margin-zero rule: 2 rows; without it: 4 — so <= 3
+            # guards against the rule silently disappearing)
+            app.add_message("user", "one\n\ntwo")
+            await pilot.pause()
+            bubble = app.query(".role-user")[-1].query_one(".bubble")
+            assert bubble.size.height <= 3
+
+    asyncio.run(scenario())
+
+
+def test_thinking_row_fixed_stage_and_done_lines():
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._start_thinking("Running tools…")
+            await pilot.pause(0.3)
+            row = app.query_one("#thinking-row")
+            assert "Running tools…" in str(row.stage_label.render())
+            assert row._stage_fixed
+            row.add_done("Searched glass")
+            await pilot.pause()
+            done = [str(l.render()) for l in row.query(".thinking-done")]
+            assert done == ["✓ Searched glass"]
+            app._stop_thinking()
+            await pilot.pause()
+
+    asyncio.run(scenario())
+
+
+def test_tool_output_appends_done_line():
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # no pause between start and outputs: done lines may arrive while
+            # the thinking row's container is still being attached — they must
+            # queue and flush without error or loss
+            app._start_thinking("Running tools…")
+            app._on_tool_output("search", "glass effect", "Found 2 matches\nrenderer.cpp")
+            app._on_tool_output("run", "cargo build", "Action cancelled by user.")
+            await pilot.pause()
+            row = app.query_one("#thinking-row")
+            done = [str(l.render()) for l in row.query(".thinking-done")]
+            assert "✓ Searched glass effect" in done
+            assert "✕ cargo build (cancelled)" in done
+            assert "✓ cargo build" not in done
+            app._stop_thinking()
+
+    asyncio.run(scenario())
+
+
+def test_live_context_usage_in_footer():
+    from capture_help.deepseek import TokenUsageStats
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._on_stats(TokenUsageStats(
+                duration_seconds=1.0, prompt_tokens=2300, completion_tokens=120,
+                total_tokens=2420, cost_usd=0.0, model="m"))
+            await pilot.pause()
+            assert "2.3k / 32k" in str(app.footer.context_label.render())
+            app._on_stats(TokenUsageStats(
+                duration_seconds=1.0, prompt_tokens=320, completion_tokens=5,
+                total_tokens=325, cost_usd=0.0, model="m"))
+            await pilot.pause()
+            assert "320 / 32k" in str(app.footer.context_label.render())
+
+    asyncio.run(scenario())
+
+
+def test_fmt_k():
+    from capture_help.gui.app import CaptureHelpApp
+
+    assert CaptureHelpApp._fmt_k(320) == "320"
+    assert CaptureHelpApp._fmt_k(2300) == "2.3k"
+    assert CaptureHelpApp._fmt_k(0) == "0"
+    assert CaptureHelpApp._fmt_k(32000) == "32k"
+    assert CaptureHelpApp._fmt_k(32768) == "32.8k"
+
+
+# --------------------------------------------------------------------------- #
+# Sidebar: active highlight + click-to-load, header project line
+# --------------------------------------------------------------------------- #
+def test_load_session_from_sidebar():
+    """Selecting a recent conversation loads it into the chat view."""
+    import time
+
+    from capture_help.history import save_session
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            save_session(
+                "abc123",
+                [
+                    {"role": "user", "content": "Fix the renderer"},
+                    {"role": "assistant", "content": "Done."},
+                ],
+                title="Fix the renderer",
+            )
+            app._load_session("abc123")
+            await pilot.pause()
+            assert app.sess_id == "abc123"
+            assert app.history[-1]["role"] == "assistant"
+            assert app._ai_title == "Fix the renderer"
+            assert app._title_requested is True  # no AI re-title of loaded session
+            assert len(app.query(".chat-message")) >= 2
+
+    asyncio.run(scenario())
+
+
+def test_sidebar_click_event_loads_session():
+    """The OptionSelected handler (fired by a real click) routes to _load_session."""
+    from types import SimpleNamespace
+
+    from capture_help.history import save_session
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            save_session("sid9", [{"role": "user", "content": "hello"}], title="hello")
+            app.on_option_list_option_selected(
+                SimpleNamespace(option=SimpleNamespace(id="session:sid9"))
+            )
+            await pilot.pause()
+            assert app.sess_id == "sid9"
+            assert any(m["content"] == "hello" for m in app.history)
+
+    asyncio.run(scenario())
+
+
+def test_load_session_ignored_while_generating():
+    """Loading a session mid-generation is refused (no history clobbering)."""
+    from types import SimpleNamespace
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            original = app.sess_id
+            original_history = list(app.history)
+            app._gen_worker = SimpleNamespace(is_running=True)
+            app._load_session("other-session")
+            await pilot.pause()
+            assert app.sess_id == original
+            assert app.history == original_history  # history untouched
+            app._gen_worker = None
+
+    asyncio.run(scenario())
+
+
+def test_primary_cta_has_no_floating_toast():
+    """The primary CTA focuses the input without a detached helper toast."""
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            inp = app.query_one("#prompt-input")
+            inp.blur()
+            await pilot.pause()
+            app.query_one("#qa-primary").press()
+            await pilot.pause()
+            assert app.focused is inp
+
+    asyncio.run(scenario())
+
+
+def test_header_has_prominent_project_line():
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            header = app.query_one("#app-header")
+            assert header.query_one("#project-name") is not None
+            assert header.query_one("#strip-langs") is not None
+            assert header.query_one("#workspace-strip") is not None
+            assert "Capture Help" in str(header.query_one("#app-title").render())
+            # project name rendered from fingerprint
+            assert "capture-help" in str(header.query_one("#project-name").render())
+
+    asyncio.run(scenario())
+
+
+# --------------------------------------------------------------------------- #
+# Phase 1 features: dashboard stats, project memory, context viewer, palette
+# --------------------------------------------------------------------------- #
+def test_workspace_summary_counts_dependencies_and_tests(tmp_path):
+    from capture_help.gui.widgets import workspace_summary
+
+    (tmp_path / "pyproject.toml").write_text(
+        'dependencies = [\n'
+        '    "typer>=0.12.0",\n'
+        '    "rich>=13.7.0",\n'
+        ']\n'
+        '[project.optional-dependencies]\n'
+        'dev = ["pytest>=7.0.0"]\n'
+    )
+    (tmp_path / "requirements-dev.txt").write_text("requests==2.31\nflask==3.0\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_render.py").write_text(
+        "def test_render():\n    pass\n\ndef test_blur():\n    pass\n"
+    )
+    s = workspace_summary({"root": str(tmp_path)})
+    assert s["deps"] == 5  # 2 + 1 pyproject, 2 requirements
+    assert s["tests"] == 2
+
+
+def test_project_memory_panel_shows_learned_rules():
+    from capture_help.memory import add_memory, get_all_memories
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            add_memory("user_preference", "Use 4-space indentation")
+            app._populate_sidebar()
+            await pilot.pause()
+            panel = app.query_one("#memory-list")
+            texts = " ".join(str(l.render()) for l in panel.children)
+            assert "✓ Use 4-space indentation" in texts
+            # empty/whitespace content must not crash the panel renderer
+            app.sidebar.set_memories([{"content": "   "}, {"content": ""}])
+            await pilot.pause()
+            texts = " ".join(str(l.render()) for l in panel.children)
+            assert "✓ (empty)" in texts
+
+    asyncio.run(scenario())
+
+
+def test_context_viewer_shows_files_and_usage():
+    from textual.widgets import Static
+
+    from capture_help.deepseek import TokenUsageStats
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._open_files = ["Renderer.cpp", "Workspace.qml"]
+            app._on_stats(TokenUsageStats(
+                duration_seconds=1.0, prompt_tokens=2300, completion_tokens=100,
+                total_tokens=2400, cost_usd=0.0, model="m"))
+            app.action_open_context()
+            await pilot.pause()
+            await pilot.pause()
+            from capture_help.gui.modals import ContextViewerScreen
+
+            assert isinstance(app.screen, ContextViewerScreen)
+            modal = app.screen
+            text = " ".join(str(w.render()) for w in modal.query(Static))
+            assert "Renderer.cpp" in text and "Workspace.qml" in text
+            assert "2,300 / 32,000" in text
+            modal.dismiss(None)
+            await pilot.pause()
+
+    asyncio.run(scenario())
+
+
+def test_command_palette_enabled_and_bindings():
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.ENABLE_COMMAND_PALETTE is True
+            assert app.COMMAND_PALETTE_BINDING == "ctrl+shift+p"
+            assert app.COMMANDS  # providers registered
+            from capture_help.gui.app import CaptureHelpCommands
+
+            assert CaptureHelpCommands in app.COMMANDS
+            # ctrl+shift+p opens the palette
+            await pilot.press("ctrl+shift+p")
+            await pilot.pause()
+            from textual.command import CommandPalette
+
+            assert isinstance(app.screen, CommandPalette)
+            app.screen.dismiss()
+            await pilot.pause()
+            # ctrl+p still opens the persona picker (not the palette)
+            app.action_open_persona_picker()
+            await pilot.pause()
+            await pilot.pause()
+            from capture_help.gui.modals import PersonaPickerScreen
+
+            assert isinstance(app.screen, PersonaPickerScreen)
+
+    asyncio.run(scenario())
+
+
+def test_command_palette_provider_lists_app_commands():
+    from capture_help.gui.app import CaptureHelpCommands
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            provider = CaptureHelpCommands(app.screen)
+            hits = [h async for h in provider.discover()]
+            prompts = [str(h.match_display) for h in hits]
+            assert "New chat" in prompts
+            assert "Open context viewer" in prompts
+            assert "Save and quit" in prompts
+            # search filters
+            found = [h async for h in provider.search("context")]
+            assert any("context" in str(h.match_display).lower() for h in found)
 
     asyncio.run(scenario())

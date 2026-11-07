@@ -442,11 +442,15 @@ def profile():
 
 @app.command("key")
 def key(
-    api_key: str = typer.Argument(..., help="DeepSeek API key to set for capture-help")
+    api_key: Optional[str] = typer.Argument(
+        None, help="DeepSeek API key to set for capture-help"
+    )
 ):
-    """Set DeepSeek API key in one quick command (e.g. capture-help key sk-xxxx)."""
+    """Set the DeepSeek API key; omit it to enter the key securely."""
     from capture_help.config import save_config
     from rich.console import Console as RichConsole
+    if not api_key:
+        api_key = typer.prompt("DeepSeek API key", hide_input=True)
     save_config(api_key=api_key, provider="deepseek")
     RichConsole().print("[bold green]✓ Saved DeepSeek API key cleanly![/bold green]")
 

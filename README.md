@@ -249,7 +249,8 @@ capture-help config --provider ollama --model gemma3:12b
 ### One-liner API key
 
 ```bash
-capture-help key sk-your-key-here
+capture-help key                  # enter the key at a hidden prompt
+capture-help key sk-your-key-here # or pass it directly (may remain in shell history)
 ```
 
 ### Environment Variables (`.env`)
@@ -440,7 +441,7 @@ persona list | show | templates | create | edit | activate | reset | delete | ex
 
 ## 🖥️ GUI Chat
 
-`capture-help chat` launches a full-screen, keyboard-driven **glass chat GUI** built on Textual. It renders conversations in opaque frosted-glass bubbles, streams markdown as it arrives, and gives you model/persona/switching without leaving the keyboard.
+`capture-help chat` launches a full-screen, keyboard-driven **dark chat GUI** built on Textual. A compact sidebar keeps recent conversations, project files, and learned memory close at hand, with one-click New chat and Search actions. The focused conversation view keeps assistant responses clean and readable, docks the prompt at the bottom, and streams markdown as it arrives.
 
 ### State Machine Architecture
 
@@ -448,13 +449,13 @@ The interface is a clean **two-state machine** — exactly one primary view is r
 
 ```
  Home State (before first prompt)      Chat State (after first prompt)
- ┌────────────────────────────────┐    ┌──────────────────────────────
- │ Hero · project cards · recent  │    │ sidebar · conversation ·
- │ conversations · files · quick   │    │ streaming · input · footer
- │ actions                        │    │ (landing widgets destroyed)
- │ Input: "What would you like to │    │ Input: "Ask Capture Help…"
- │        build today?"            │    │
- └────────────────────────────────┘    └──────────────────────────────
+ ┌────────────────────────────────┐    ┌──────────┬───────────────────┐
+ │ Hero · prompt ideas · quick    │    │ Sidebar  │ Conversation      │
+ │ actions · workspace summary   │    │ chats    │                   │
+ │                                │    │ files    │ streamed replies  │
+ │ Input: "What would you like to │    │ memory   │                   │
+ │        build today?"            │    │          │ Docked prompt     │
+ └────────────────────────────────┘    └──────────┴───────────────────┘
 ```
 
 - **Entering a message (or any slash command / quick action / persona greeting) immediately transitions to Chat Mode.**
@@ -475,7 +476,7 @@ The interface is a clean **two-state machine** — exactly one primary view is r
 | `Ctrl+D` | Toggle the debug/log panel |
 | `Ctrl+C` | Cancel generation / quit |
 
-The model name in the bottom status bar is clickable and opens the model picker.
+The model name in the bottom status bar is clickable and opens the model picker. The sidebar also provides New chat and Search Project actions.
 
 ### Slash Commands
 

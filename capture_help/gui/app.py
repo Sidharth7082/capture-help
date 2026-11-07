@@ -41,6 +41,7 @@ from typing import Dict, List, Optional
 from rich.console import Console as RichConsole
 from textual import work
 from textual.app import App, ComposeResult
+from textual.command import CommandPalette, Hit, Provider
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.widgets import Button, Input, Label, Static
 
@@ -50,6 +51,7 @@ from capture_help.config import settings, save_config
 from capture_help.deepseek import DEEPSEEK_MODELS
 from capture_help.gui.modals import (
     ConfirmScreen,
+    ContextViewerScreen,
     ModelPickerScreen,
     PersonaPickerScreen,
     SearchModal,
@@ -72,12 +74,16 @@ from capture_help.gui.widgets import (
     workspace_summary,
 )
 from capture_help.history import list_sessions, load_session, save_session
+from capture_help.memory import get_all_memories
 from capture_help.project import fingerprint_project
 from capture_help.provider import ProviderError
 from capture_help.utils import get_git_diff
 
 MAX_TOOL_TURNS = 5
 CONFIRM_TIMEOUT = 120
+# Context window shown in the live footer label; per-model values may refine
+# this later, so it is a single named constant rather than a magic "32k".
+CONTEXT_WINDOW_TOKENS = 32_000
 
 # Input placeholder is scoped to the current view state.
 HOME_PLACEHOLDER = "Explain code, fix bugs, or search your workspace…"
@@ -102,6 +108,35 @@ SLASH_COMMANDS = [
 ]
 
 
+class CaptureHelpCommands(Provider):
+    """App-level commands surfaced in the ⌘ command palette (ctrl+shift+p)."""
+
+    def _commands(self) -> list[Hit]:
+        app = self.app
+        return [
+            Hit(10.0, "Ask Capture Help", app.action_focus_input, "Ask the assistant anything"),
+            Hit(9.0, "New chat", app.action_new_chat, "Start a fresh conversation (ctrl+n)"),
+            Hit(8.0, "Search codebase", app.action_search, "Keyword search the workspace (ctrl+k)"),
+            Hit(7.0, "Clear conversation", app.action_clear_chat, "Reset the current chat (ctrl+l)"),
+            Hit(6.0, "Open model picker", app.action_open_model_picker, "Switch the active AI model"),
+            Hit(5.0, "Open persona picker", app.action_open_persona_picker, "Switch character persona"),
+            Hit(4.0, "Open context viewer", app.action_open_context, "Inspect what the model has in context (ctrl+o)"),
+            Hit(3.0, "Toggle debug panel", app.action_toggle_debug, "Show/hide the debug log (ctrl+d)"),
+            Hit(2.0, "Slash command help", app.action_show_slash_help, "List available /commands"),
+            Hit(1.0, "Save and quit", app.action_save_and_quit, "Persist this session and exit"),
+        ]
+
+    async def search(self, query: str) -> list[Hit]:
+        q = query.lower()
+        for hit in self._commands():
+            if q in str(hit.match_display).lower():
+                yield hit
+
+    async def discover(self) -> list[Hit]:
+        for hit in self._commands():
+            yield hit
+
+
 class CaptureHelpApp(App[None]):
     """Premium glass chat interface for capture-help."""
 
@@ -117,11 +152,13 @@ class CaptureHelpApp(App[None]):
         ("ctrl+c", "cancel_or_quit", "Cancel / quit"),
         ("ctrl+shift+m", "open_model_picker", "Model picker"),
         ("ctrl+p", "open_persona_picker", "Persona picker"),
+        ("ctrl+o", "open_context", "Context viewer"),
     ]
 
-    # The slash popup + model/persona pickers provide discoverability; the
-    # built-in command palette is disabled so ctrl+p is free for personas.
-    ENABLE_COMMAND_PALETTE = False
+    # Command palette lives on ctrl+shift+p so ctrl+p stays free for personas.
+    ENABLE_COMMAND_PALETTE = True
+    COMMAND_PALETTE_BINDING = "ctrl+shift+p"
+    COMMANDS = {CaptureHelpCommands}
 
     def __init__(
         self,
@@ -149,6 +186,13 @@ class CaptureHelpApp(App[None]):
         self._thinking_timer = None
         self._gen_worker = None
         self._tool_decision_q: "queue.Queue[Optional[bool]]" = queue.Queue()
+
+        # conversation title: heuristic fallback, refined once by the model
+        self._ai_title: Optional[str] = None
+        self._title_requested = False
+
+        # last token stats, for the context viewer
+        self._last_stats = None
 
         # application view state: exactly one of Home / Chat renders at a time
         self._in_home_view = True
@@ -220,7 +264,9 @@ class CaptureHelpApp(App[None]):
                         f"   {ICONS['search']} Ctrl+K Search"
                         f"   {ICONS['clear']} Ctrl+L Clear"
                         f"   {ICONS['debug']} Ctrl+D Debug"
-                        f"   {ICONS['model']} Ctrl+Shift+M Model",
+                        f"   {ICONS['model']} Ctrl+Shift+M Model"
+                        "   🧠 Ctrl+O Context"
+                        "   ⌘ Ctrl+Shift+P Palette",
                         classes="sidebar-item",
                         id="prompt-hints",
                     )
@@ -235,10 +281,12 @@ class CaptureHelpApp(App[None]):
         self._load_default_session_preview()
         self.footer.set_model(settings.deepseek_model)
         self.footer.set_provider()
-        self.footer.set_context("8k / 32k")
+        self.footer.set_context(f"0 / {self._fmt_k(CONTEXT_WINDOW_TOKENS)}")
         self.footer.set_state("ready")
         self._set_landing(not self.history)
         self.query_one("#prompt-input", ChatInput).focus()
+        # Keep the Today's Workspace dashboard fresh while it's on screen.
+        self.set_interval(60, self._refresh_workspace_tick)
         # Gentle entrance: fade the chrome in over ~350ms.
         for selector in ("#app-header", "#sidebar", "#status-footer"):
             try:
@@ -256,13 +304,43 @@ class CaptureHelpApp(App[None]):
             sessions = list_sessions()[:8]
         except Exception:  # noqa: BLE001
             sessions = []
-        self.sidebar.set_recent_chats(sessions)
+        self.sidebar.set_recent_chats(sessions, active_id=self.sess_id)
         self.sidebar.set_open_files(self._open_files)
+        try:
+            memories = get_all_memories()[:8]
+        except Exception:  # noqa: BLE001
+            memories = []
+        self.sidebar.set_memories(memories)
 
     def _populate_landing(self) -> None:
         if self.landing is None:
             return
         self.landing.set_workspace(workspace_summary(self.project))
+
+    def _refresh_workspace_tick(self) -> None:
+        """Periodic dashboard refresh (git status etc. is cheap enough)."""
+        if not self._in_home_view or self.landing is None:
+            return
+        if getattr(self, "_ws_refresh_running", False):
+            return
+        self._ws_refresh_running = True
+        self._workspace_refresh_worker()
+
+    @work(thread=True, exclusive=False, group="workspace")
+    def _workspace_refresh_worker(self) -> None:
+        try:
+            summary = workspace_summary(self.project)
+            try:
+                self.call_from_thread(self._apply_workspace_refresh, summary)
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            # always clear the in-flight flag so a later tick can retry
+            self._ws_refresh_running = False
+
+    def _apply_workspace_refresh(self, summary: dict) -> None:
+        if self._in_home_view and self.landing is not None:
+            self.landing.set_workspace(summary)
 
     def _recent_project_files(self) -> list:
         """Project source files, newest first, as a lightweight recent-files list."""
@@ -372,12 +450,12 @@ class CaptureHelpApp(App[None]):
     # ------------------------------------------------------------------ #
     # Chat helpers
     # ------------------------------------------------------------------ #
-    def add_message(self, role: str, content: str) -> ChatMessage:
+    def add_message(self, role: str, content: str, sublabel: str | None = None) -> ChatMessage:
         # Any message means a conversation exists: leave the home dashboard
         # (idempotent) so the two views can never render simultaneously.
         self._enter_chat()
         chat = self.query_one("#chat", ScrollableContainer)
-        msg = ChatMessage(role, content)
+        msg = ChatMessage(role, content, sublabel=sublabel)
         msg.add_class("enter")
         chat.mount(msg)
         chat.scroll_end(animate=True)
@@ -412,7 +490,7 @@ class CaptureHelpApp(App[None]):
 
     def _save_session(self) -> None:
         try:
-            save_session(self.sess_id, self.history)
+            save_session(self.sess_id, self.history, title=self._ai_title)
         except Exception:  # noqa: BLE001
             pass
 
@@ -429,12 +507,12 @@ class CaptureHelpApp(App[None]):
     # ------------------------------------------------------------------ #
     # Thinking / streaming UI
     # ------------------------------------------------------------------ #
-    def _start_thinking(self) -> None:
+    def _start_thinking(self, stage: str | None = None) -> None:
         self._stop_thinking()
         chat = self.query_one("#chat", ScrollableContainer)
-        self._thinking_row = ThinkingRow()
+        self._thinking_row = ThinkingRow(fixed_stage=stage)
         chat.mount(self._thinking_row)
-        self._thinking_dots = 0
+        self._tick_int = 0
         self._thinking_timer = self.set_interval(0.25, self._tick_thinking)
         self.footer.set_state("thinking", streaming=True)
 
@@ -450,15 +528,22 @@ class CaptureHelpApp(App[None]):
             self._thinking_row = None
 
     def _tick_thinking(self) -> None:
-        self._thinking_dots = (getattr(self, "_thinking_dots", 0) + 1) % 4
-        dots = "." * self._thinking_dots
-        if self._thinking_row is not None and self._thinking_row.label is not None:
-            self._thinking_row.label.update(f"✦ Thinking{dots}")
+        """Advance the thinking row's stage + progress bar over ~8s, then hold
+        at a done-looking state so a long generation still looks alive."""
+        row = self._thinking_row
+        if row is None:
+            return
+        if row.progress_label is not None and row.stage_label is not None:
+            i = int(self._tick_int // 2)  # each frame is 0.25s
+            progress = (self._tick_int % 16) / 16.0 if self._tick_int < 100 else 0.9
+            row.set_stage(i)
+            row.set_progress(progress)
+        self._tick_int += 1
 
     # ------------------------------------------------------------------ #
     # Streaming worker (runs in a background thread)
     # ------------------------------------------------------------------ #
-    def _get_provider(self):
+    def _get_provider(self, notify_fallback: bool = True):
         from capture_help.deepseek import DeepSeekProvider
         from capture_help.providers.ollama import OllamaProvider
 
@@ -476,7 +561,8 @@ class CaptureHelpApp(App[None]):
             return OllamaProvider(model=model, base_url=base)
         key = settings.deepseek_api_key
         if not key or len(key) < 10 or "test" in key.lower():
-            self.call_from_thread(self._fallback_to_local)
+            if notify_fallback:
+                self.call_from_thread(self._fallback_to_local)
             return OllamaProvider(model="gemma3:12b", base_url="http://localhost:11434/v1")
         return DeepSeekProvider(model=model)
 
@@ -524,12 +610,21 @@ class CaptureHelpApp(App[None]):
             if not calls:
                 break
 
-            outputs: List[str] = []
-            for kind, payload in calls:
-                out = self._execute_tool_blocking(kind, payload, reply)
-                display = payload if not isinstance(payload, tuple) else payload[0]
-                outputs.append(out)
-                self.call_from_thread(self._on_tool_output, kind, display, out)
+            # Tools can take seconds (builds, searches): keep the UI alive with
+            # a pinned progress card that fills in ✓ lines as tools finish.
+            self.call_from_thread(self._start_thinking, "Running tools…")
+
+            try:
+                outputs: List[str] = []
+                for kind, payload in calls:
+                    out = self._execute_tool_blocking(kind, payload, reply)
+                    display = payload if not isinstance(payload, tuple) else payload[0]
+                    outputs.append(out)
+                    self.call_from_thread(self._on_tool_output, kind, display, out)
+            except Exception as e:  # noqa: BLE001
+                # Never leave the pinned "Running tools…" card stuck on screen.
+                self.call_from_thread(self._on_error, f"Tool execution failed: {e}")
+                return
 
             self.call_from_thread(
                 self.history.append,
@@ -579,15 +674,28 @@ class CaptureHelpApp(App[None]):
             self._stop_thinking()
             self._current_message = self.add_message("assistant", "")
         self._ui_text += chunk
-        # Streaming cursor: append a blinking block after whatever has streamed.
-        cursor = "▍" if len(self._ui_text) % 2 else "▋"
-        self._current_message.update_markdown(self._ui_text + cursor)
+        self._current_message.update_markdown(self._ui_text)
         self._scroll_chat()
 
     def _on_stats(self, stats) -> None:
+        self._last_stats = stats
         self.footer.set_stats(stats)
+        if getattr(stats, "prompt_tokens", 0):
+            self.footer.set_context(
+                f"{self._fmt_k(stats.prompt_tokens)} / {self._fmt_k(CONTEXT_WINDOW_TOKENS)}"
+            )
         if getattr(stats, "cache_hit_tokens", 0):
             self._log_debug(f"[dim]cache hit[/dim] {stats.cache_hit_tokens} tokens")
+
+    @staticmethod
+    def _fmt_k(tokens: int) -> str:
+        """Compact token count: 2300 -> '2.3k', 32000 -> '32k', 320 -> '320'."""
+        if tokens < 1000:
+            return f"{tokens}"
+        value = tokens / 1000
+        if value == int(value):
+            return f"{int(value)}k"
+        return f"{value:.1f}k"
 
     def _on_turn_done(self, reply: str) -> None:
         self._stop_thinking()
@@ -596,14 +704,111 @@ class CaptureHelpApp(App[None]):
         self._ui_text = ""
         self.history.append({"role": "assistant", "content": reply})
         self._save_session()
+        self._maybe_generate_title()
+
+    # -- AI conversation titles -- #
+    def _maybe_generate_title(self) -> None:
+        """Kick off a best-effort, one-shot title refinement for this session.
+
+        Runs in a background thread after the first assistant reply so the
+        sidebar shows a descriptive title instead of the raw first prompt.
+        The heuristic title from ``save_session`` stays until this lands, and
+        every failure path falls back to it silently.
+        """
+        if self._title_requested:
+            return
+        self._title_requested = True
+        if len(self.history) < 2:
+            return
+        if not any(m.get("role") == "assistant" for m in self.history):
+            return
+        if not any(m.get("role") == "user" for m in self.history):
+            return
+        self._title_worker(self.sess_id)
+
+    @work(thread=True, exclusive=False, group="title")
+    def _title_worker(self, sess_id: str) -> None:
+        # Snapshot history on the UI thread (never read a live list from a
+        # worker) and build the provider without the missing-key fallback
+        # side effects — the generation worker already handled those.
+        try:
+            snapshot = self.call_from_thread(lambda: [dict(m) for m in self.history])
+        except Exception:  # noqa: BLE001
+            return
+        first_user = next(
+            (m.get("content", "") for m in snapshot if m.get("role") == "user"), ""
+        ).strip()
+        first_asst = next(
+            (m.get("content", "") for m in snapshot if m.get("role") == "assistant"), ""
+        ).strip()
+        if not first_user:
+            return
+        try:
+            provider = self._get_provider(notify_fallback=False)
+        except Exception:  # noqa: BLE001
+            return
+        messages = [
+            {
+                "role": "user",
+                "content": f"User: {first_user[:300]}\n\nAssistant: {first_asst[:300]}",
+            }
+        ]
+        system = (
+            "Create a short, descriptive title (2-6 words) for this coding "
+            "conversation. Reply with ONLY the title: no quotes, no punctuation, "
+            "no markdown."
+        )
+        title = ""
+        try:
+            gen = provider.stream_completion(messages, system, temperature=0.2)
+            for chunk, _ in gen:
+                if chunk:
+                    title += chunk
+                    if len(title) > 200:
+                        break
+        except Exception:  # noqa: BLE001
+            return
+        title = self._sanitize_title(title)
+        if title:
+            try:
+                self.call_from_thread(self._apply_title, sess_id, title)
+            except Exception:  # noqa: BLE001
+                pass
+
+    @staticmethod
+    def _sanitize_title(text: str) -> str:
+        title = (text or "").strip().strip('"\'`').strip()
+        title = title.splitlines()[0].strip() if title else ""
+        if title.lower().startswith("title:"):
+            title = title[6:].strip()
+        title = title.rstrip(".:;!?-")
+        return title[:48]
+
+    def _apply_title(self, sess_id: str, title: str) -> None:
+        if self.sess_id != sess_id or not title:
+            return
+        self._ai_title = title
+        self._save_session()
+        self._populate_sidebar()
 
     def _on_tool_output(self, kind: str, display, out: str) -> None:
         icon = {"run": "⚡", "read": "▤", "search": "⌕", "write": "✎", "mcp": "⇄"}.get(kind, "⚙")
         short = out if len(out) < 1200 else out[:1200] + "\n…"
-        self.add_message("tool", f"{icon} {display}\n{short}")
+        sublabel = {"run": "🐚 Terminal", "read": "▤ File", "search": "⌕ Search",
+                    "write": "✎ Write", "mcp": "⇄ MCP"}.get(kind)
+        self.add_message("tool", f"{icon} {display}\n{short}", sublabel=sublabel)
         self._log_debug(f"[cyan]{icon} tool {kind}:[/cyan] {display}")
         if kind in ("read", "write"):
             self._track_open_file(str(display))
+        # reflect completed work in the pinned thinking card, if it is showing
+        if self._thinking_row is not None:
+            verb = {"run": "Ran", "read": "Read", "search": "Searched",
+                    "write": "Wrote", "mcp": "Called"}.get(kind, "Ran")
+            cancelled = "Action cancelled by user." in (out or "")
+            if cancelled:
+                self._thinking_row.add_done(f"{display} (cancelled)", warn=True)
+            else:
+                self._thinking_row.add_done(f"{verb} {display}")
 
     def _on_generation_finished(self) -> None:
         self._stop_thinking()
@@ -673,6 +878,40 @@ class CaptureHelpApp(App[None]):
         else:
             popup.hide()
 
+    # ------------------------------------------------------------------ #
+    # Sidebar: load a saved conversation
+    # ------------------------------------------------------------------ #
+    def on_option_list_option_selected(self, event) -> None:
+        opt_id = getattr(event.option, "id", None)
+        if opt_id and opt_id.startswith("session:"):
+            self._load_session(opt_id[len("session:"):])
+
+    def _load_session(self, sid: str) -> None:
+        """Open a saved conversation from the sidebar into the chat view."""
+        if self._gen_worker is not None and self._gen_worker.is_running:
+            self.notify("Wait for the current reply to finish first.", severity="warning")
+            return
+        data = load_session(sid)
+        if not data:
+            self.notify("Could not load that session.", severity="warning")
+            return
+        messages = data.get("messages") or []
+        self.history = [dict(m) for m in messages]
+        self.sess_id = sid
+        self._ai_title = data.get("title") or None
+        # the loaded title is final — don't regenerate a new one
+        self._title_requested = True
+        chat = self.query_one("#chat", ScrollableContainer)
+        chat.remove_children()
+        for m in self.history:
+            if m.get("role") in ("user", "assistant"):
+                self.add_message(m["role"], m.get("content", ""))
+        self._enter_chat()
+        self._populate_sidebar()
+        self._save_session()  # bump it to the top of the list
+        title = data.get("title") or sid
+        self.notify(f"Loaded: {title}")
+
     def _popup(self) -> SlashPopup | None:
         try:
             return self.query_one("#slash-popup", SlashPopup)
@@ -697,10 +936,15 @@ class CaptureHelpApp(App[None]):
     # ------------------------------------------------------------------ #
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
-        if button_id == "qa-primary":
+        if button_id == "sidebar-new-chat":
+            self.action_new_chat()
+        elif button_id == "sidebar-search":
+            self.action_search()
+        elif button_id == "qa-primary":
             # The hero action: focus the input and let the user type a prompt.
+            # No toast — the input placeholder and the hint line beneath it
+            # already explain what to do.
             self.query_one("#prompt-input", ChatInput).focus()
-            self.notify("Type your prompt below, or use / for commands.", severity="information")
         elif button_id.startswith("chip-"):
             try:
                 text = EXAMPLE_PROMPTS[int(button_id.split("-", 1)[1])]
@@ -761,6 +1005,8 @@ class CaptureHelpApp(App[None]):
         if sub in ("/clear", "clear"):
             self.history = []
             self.sess_id = str(uuid.uuid4())[:8]
+            self._ai_title = None
+            self._title_requested = False
             self.query_one("#chat", ScrollableContainer).remove_children()
             self._show_home()
             self.footer.set_stats(None)
@@ -863,6 +1109,7 @@ class CaptureHelpApp(App[None]):
 
             if arg:
                 add_memory("user_preference", arg)
+                self._populate_sidebar()
                 self.notify(f"Learned: {arg}")
             else:
                 memories = get_all_memories()
@@ -961,6 +1208,32 @@ class CaptureHelpApp(App[None]):
             self._on_persona_picked,
         )
 
+    def action_open_context(self) -> None:
+        """Inspect what the model currently has in context (Ctrl+O)."""
+        hist_chars = sum(len(m.get("content", "")) for m in self.history)
+        last = getattr(self, "_last_stats", None)
+        prompt_tokens = int(getattr(last, "prompt_tokens", 0) or 0)
+        self.push_screen(
+            ContextViewerScreen(
+                session_id=self.sess_id,
+                title=self._ai_title or "",
+                open_files=list(self._open_files),
+                prompt_tokens=prompt_tokens,
+                window_tokens=CONTEXT_WINDOW_TOKENS,
+                history_chars=hist_chars,
+            )
+        )
+
+    def action_focus_input(self) -> None:
+        self.query_one("#prompt-input", ChatInput).focus()
+
+    def action_show_slash_help(self) -> None:
+        self.push_screen(SlashHelpScreen(SLASH_COMMANDS))
+
+    def action_save_and_quit(self) -> None:
+        self._save_session()
+        self.exit()
+
     def action_clear_chat(self) -> None:
         self.history = []
         self.query_one("#chat", ScrollableContainer).remove_children()
@@ -972,6 +1245,8 @@ class CaptureHelpApp(App[None]):
         self._save_session()
         self.history = []
         self.sess_id = str(uuid.uuid4())[:8]
+        self._ai_title = None
+        self._title_requested = False
         self.query_one("#chat", ScrollableContainer).remove_children()
         self._populate_landing()
         self._show_home()

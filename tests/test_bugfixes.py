@@ -15,6 +15,20 @@ def test_key_command_saves_without_nameerror():
     assert "NameError" not in res.output
 
 
+def test_key_command_prompts_without_echoing_key(monkeypatch):
+    from capture_help import config
+
+    saved = []
+    monkeypatch.setattr(config, "save_config", lambda **kwargs: saved.append(kwargs))
+    api_key = "sk-hidden-test-key-123456789"
+    res = runner.invoke(app, ["key"], input=api_key + "\n")
+
+    assert res.exit_code == 0
+    assert saved == [{"api_key": api_key, "provider": "deepseek"}]
+    assert api_key not in res.output
+    assert "Saved DeepSeek API key" in res.output
+
+
 def test_changelog_command_imports_optional():
     """Bug: changelog_command used Optional without importing it (NameError at runtime)."""
     from capture_help.commands.changelog import changelog_command
