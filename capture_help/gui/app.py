@@ -93,6 +93,8 @@ DEFAULT_CONTEXT_WINDOW_TOKENS = 64_000
 DEFAULT_MAX_OUTPUT_TOKENS = 8_000
 STREAM_RENDER_INTERVAL = 0.06
 MAX_RENDERED_CHAT_MESSAGES = 40
+# Only the newest messages keep rich Markdown; older ones render as plain text.
+RICH_RECENT_MESSAGES = 8
 STREAM_UI_BATCH_INTERVAL = 0.10
 STREAM_UI_BATCH_CHARS = 8_192
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -275,18 +277,18 @@ class CaptureHelpApp(App[None]):
                 yield ScrollableContainer(id="chat")
                 with Vertical(id="input-area"):
                     yield SlashPopup(SLASH_COMMANDS)
-                    yield ChatInput(
-                        placeholder="Message Capture Help…  (Ctrl+V to paste an image)",
-                        id="prompt-input",
-                    )
+                    with Horizontal(id="composer-row"):
+                        yield ChatInput(
+                            placeholder="Message Capture Help…",
+                            id="prompt-input",
+                        )
+                        yield Button("Send ↑", id="send-prompt")
                     with Horizontal(id="composer-actions"):
-                        yield Button("+ Image", id="attach-image")
+                        yield Button("＋ Image", id="attach-image")
                         yield Label("", id="pending-images")
-                        yield Button("×", id="clear-images", disabled=True)
-                        yield Button("↑  Send", id="send-prompt", variant="primary")
+                        yield Button("Remove", id="clear-images", disabled=True)
                     yield Label(
-                        "Ctrl+V paste text or image · Enter new line · Ctrl+Enter send · Type / for commands",
-                        classes="sidebar-item",
+                        "Ctrl+V paste text or image · Enter newline · Ctrl+Enter send · / commands",
                         id="prompt-hints",
                     )
             yield self.debug_panel
@@ -304,18 +306,11 @@ class CaptureHelpApp(App[None]):
             f"0 / ~{self._fmt_k(self._context_window_tokens)}"
         )
         self.footer.set_state("ready")
+        self._update_pending_images()
         self._set_landing(not self.history)
         self.query_one("#prompt-input", ChatInput).focus()
         # Keep the Today's Workspace dashboard fresh while it's on screen.
         self.set_interval(60, self._refresh_workspace_tick)
-        # Gentle entrance: fade the chrome in over ~350ms.
-        for selector in ("#app-header", "#sidebar", "#status-footer"):
-            try:
-                w = self.query_one(selector)
-                w.styles.opacity = 0.0
-                w.styles.animate("opacity", 1.0, duration=0.35)
-            except Exception:  # noqa: BLE001
-                pass
 
     # ------------------------------------------------------------------ #
     # Initialization helpers
@@ -418,44 +413,29 @@ class CaptureHelpApp(App[None]):
         """Swap between the home dashboard and the chat view.
 
         The two views are mutually exclusive: only one is ever rendered.
-        Entering chat fades the dashboard out over ``_VIEW_FADE_S`` seconds
-        and then hard-collapses it, so no home widgets remain in the layout.
+        Switching is immediate so no fade timers or opacity animations run.
         """
         landing = self.query_one("#landing")
         chat = self.query_one("#chat")
         self._in_home_view = visible
+        self._home_fade_pending = False
         self._set_input_placeholder()
         if visible:
-            self._home_fade_pending = False
             chat.styles.height = "0"
             chat.styles.display = "block"
-            chat.styles.opacity = 0.0
             landing.styles.display = "block"
             landing.styles.height = "1fr"
-            landing.styles.opacity = 1.0
             return
-        if self._home_fade_pending:
-            return
-        landing.styles.opacity = 0.0
-        self._home_fade_pending = True
-        self.set_timer(self._VIEW_FADE_S, self._finish_enter_chat)
-
-    def _finish_enter_chat(self) -> None:
-        try:
-            landing = self.query_one("#landing")
-            chat = self.query_one("#chat")
-        except Exception:  # noqa: BLE001
-            return
-        if self._in_home_view or not self._home_fade_pending:
-            return
-        self._home_fade_pending = False
         landing.styles.display = "none"
         landing.styles.height = "0"
-        landing.styles.opacity = 1.0
         chat.styles.display = "block"
         chat.styles.height = "1fr"
-        chat.styles.opacity = 1.0
         self._scroll_chat()
+
+    def _finish_enter_chat(self) -> None:
+        """Kept for callers that used the old fade timer."""
+        if not self._in_home_view:
+            self._set_landing(False)
 
     def _seed_initial_messages(self) -> None:
         self._render_history_messages(self.history)
@@ -475,6 +455,13 @@ class CaptureHelpApp(App[None]):
             self._show_history_notice()
         for message in visible[-MAX_RENDERED_CHAT_MESSAGES:]:
             self.add_message(message["role"], message.get("content", ""))
+        self._compact_old_messages()
+
+    def _compact_old_messages(self) -> None:
+        chat = self.query_one("#chat", ScrollableContainer)
+        messages = list(chat.query(ChatMessage))
+        for message in messages[:-RICH_RECENT_MESSAGES]:
+            message.compact()
 
     def _show_history_notice(self) -> None:
         chat = self.query_one("#chat", ScrollableContainer)
@@ -493,12 +480,14 @@ class CaptureHelpApp(App[None]):
         chat = self.query_one("#chat", ScrollableContainer)
         messages = list(chat.query(ChatMessage))
         excess = len(messages) - MAX_RENDERED_CHAT_MESSAGES
-        if excess <= 0:
-            return
-        for message in messages[:excess]:
-            message.remove()
-        self._hidden_chat_messages += excess
-        self._show_history_notice()
+        if excess > 0:
+            for message in messages[:excess]:
+                message.remove()
+            self._hidden_chat_messages += excess
+            self._show_history_notice()
+            messages = messages[excess:]
+        for message in messages[:-RICH_RECENT_MESSAGES]:
+            message.compact()
 
     def _load_default_session_preview(self) -> None:
         # Left empty: recent chats are clickable from the sidebar instead.
@@ -519,10 +508,8 @@ class CaptureHelpApp(App[None]):
         self._enter_chat()
         chat = self.query_one("#chat", ScrollableContainer)
         msg = ChatMessage(role, content, sublabel=sublabel, streaming=streaming)
-        msg.add_class("enter")
         chat.mount(msg)
-        chat.scroll_end(animate=True)
-        self.call_after_refresh(lambda: msg.remove_class("enter"))
+        chat.scroll_end(animate=False)
         return msg
 
     def _scroll_chat(self) -> None:
@@ -1187,7 +1174,8 @@ class CaptureHelpApp(App[None]):
         message = {"role": "user", "content": text}
         if image_paths:
             message["image_paths"] = image_paths
-            text = f"{text}\n\n[Attached image(s): {', '.join(Path(path).name for path in image_paths)}]"
+            names = ", ".join(Path(path).name for path in image_paths)
+            text = f"{text}\n\n📎 {names}"
             message["content"] = text
         self.history.append(message)
         self.add_message("user", text)
@@ -1387,8 +1375,10 @@ class CaptureHelpApp(App[None]):
     def _update_pending_images(self) -> None:
         label = self.query_one("#pending-images", Label)
         clear_button = self.query_one("#clear-images", Button)
-        label.update(", ".join(Path(path).name for path in self._pending_images))
-        clear_button.disabled = not self._pending_images
+        count = len(self._pending_images)
+        label.update(f"📎 {count} image{'s' if count != 1 else ''}" if count else "")
+        clear_button.disabled = not count
+        clear_button.display = bool(count)
 
     def _remember_correction(self, text: str) -> None:
         """Learn only unmistakable user corrections, not ordinary chat content."""

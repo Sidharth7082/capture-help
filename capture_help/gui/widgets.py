@@ -531,6 +531,7 @@ class ChatMessage(Container):
         self.markdown: Markdown | None = None
         self.role_label: Label | None = None
         self.stream_preview: Static | None = None
+        self._compact_pending = False
 
     def compose(self) -> ComposeResult:
         avatar = ROLE_AVATARS.get(self.role, "·")
@@ -540,7 +541,9 @@ class ChatMessage(Container):
         yield self.role_label
         with Container(classes="bubble"):
             if self.role in ("user", "assistant"):
-                if self.role == "assistant" and self.streaming:
+                if self._compact_pending:
+                    yield Static(self.content or "", classes="plain-message", markup=False)
+                elif self.role == "assistant" and self.streaming:
                     self.stream_preview = Static(self.content or "", classes="stream-preview")
                     yield self.stream_preview
                 else:
@@ -571,6 +574,30 @@ class ChatMessage(Container):
         preview.remove()
         self.markdown = CodeMarkdown(text)
         self.query_one(".bubble").mount(self.markdown)
+
+    def compact(self) -> None:
+        """Swap rich Markdown for plain text once a message is no longer recent.
+
+        Markdown re-rendering dominates refresh cost in long chats, and older
+        messages rarely need syntax highlighting, so they render as plain text.
+        """
+        if self._compact_pending:
+            return
+        self._compact_pending = True
+        if self.markdown is None:
+            # Not composed yet: compose() will render plain text directly.
+            return
+        source = self.markdown.source
+        self.content = source
+        self.stream_preview = None
+        try:
+            self.markdown.remove()
+        except Exception:  # noqa: BLE001
+            return
+        self.markdown = None
+        self.query_one(".bubble").mount(
+            Static(source, classes="plain-message", markup=False)
+        )
 
 
 class ThinkingRow(Container):
@@ -665,15 +692,13 @@ class HeaderBar(Vertical):
         self.project = project
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="hero-row"):
-            yield Label(f"{theme.ICONS['bolt']} Capture Help", id="app-title")
-
-        langs = " • ".join((self.project.get("languages") or [])[:3]) or "—"
+        langs = " · ".join((self.project.get("languages") or [])[:3]) or "—"
         git_clean = self.project.get("git_clean", True)
         git = "✓ Clean" if git_clean else "✗ Modified"
         git_cls = "strip-git-clean" if git_clean else "strip-git-dirty"
 
-        with Horizontal(id="project-row"):
+        with Horizontal(id="hero-row"):
+            yield Label(f"{theme.ICONS['bolt']} Capture Help", id="app-title")
             yield Label(
                 f"{theme.ICONS['project']}  {self.project.get('name', 'project')}",
                 id="project-name",
@@ -682,7 +707,6 @@ class HeaderBar(Vertical):
                 yield Label(langs, id="strip-langs")
                 yield Label(git, classes=f"strip-pill {git_cls}")
                 yield Label(model_display_name(), classes="strip-pill strip-accent")
-                yield Label(provider_display_name(), classes="strip-pill", id="strip-provider")
 
 
 class StatusFooter(Horizontal):
@@ -776,6 +800,13 @@ class StatusFooter(Horizontal):
                 action()
 
 
+def _sidebar_title(title: str, limit: int = 14) -> str:
+    """Trim a session title to one short sidebar line."""
+    text = re.sub(r"^https?://", "", title.strip())
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 class SidebarPanel(Vertical):
     """Left sidebar: recent chat sessions, files touched this session and
     the project's learned background memory."""
@@ -789,11 +820,9 @@ class SidebarPanel(Vertical):
     def compose(self) -> ComposeResult:
         with Horizontal(classes="sidebar-brand"):
             yield Label("⚡", classes="sidebar-logo")
-            with Vertical(classes="sidebar-brand-copy"):
-                yield Label("Capture Help", classes="sidebar-brand-title")
-                yield Label("AI CODING WORKSPACE", classes="sidebar-brand-caption")
+            yield Label("Capture Help", classes="sidebar-brand-title")
         with Horizontal(classes="sidebar-actions"):
-            yield Button("＋ New chat", id="sidebar-new-chat", classes="sidebar-action")
+            yield Button("＋ New", id="sidebar-new-chat", classes="sidebar-action")
             yield Button("⌕ Search", id="sidebar-search", classes="sidebar-action")
         with Vertical(classes="sidebar-section"):
             yield Label("CHATS", classes="sidebar-section-title")
@@ -820,17 +849,15 @@ class SidebarPanel(Vertical):
             return
         for s in sessions:
             sid = str(s.get("id", ""))
-            title = s.get("title", "Chat Session")[:22]
-            turns = s.get("turns", 0)
+            title = _sidebar_title(str(s.get("title", "Chat Session")))
             emoji = title_emoji(title)
             rel = relative_time(s.get("timestamp"))
-            meta = Text(f"\n{rel}  ·  {turns} turns", style="dim")
             if sid == active_id:
                 head = Text(f"▌ {emoji} {title}", style="bold #63c6e2")
             else:
                 head = Text(f"  {emoji} {title}", style="")
             self.recent_list.add_option(
-                Option(head + meta, id=f"session:{sid}")
+                Option(head + Text(f"\n  {rel}", style="dim"), id=f"session:{sid}")
             )
 
     def set_open_files(self, files: list) -> None:
@@ -879,10 +906,10 @@ class DebugPanel(Vertical):
 # Landing screen (empty state)
 # --------------------------------------------------------------------------- #
 EXAMPLE_PROMPTS = [
-    "Explain renderer.cpp...",
+    "Explain code...",
     "Fix build errors...",
-    "Generate documentation...",
-    "Refactor my project...",
+    "Generate docs...",
+    "Refactor project...",
 ]
 
 QUICK_ACTIONS = [

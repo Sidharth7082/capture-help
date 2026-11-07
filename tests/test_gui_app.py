@@ -122,7 +122,7 @@ def test_image_attachment_modal_and_vision_payload(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             assert app._pending_images == [str(image_path)]
-            assert "sample.png" in str(app.query_one("#pending-images").render())
+            assert "1 image" in str(app.query_one("#pending-images").render())
 
             await pilot.click("#prompt-input")
             app._submit_prompt("Describe this")
@@ -1334,6 +1334,28 @@ def test_loaded_history_renders_only_recent_messages():
                 app.query_one("#history-trim-notice").render()
             )
             assert len(app.history) == MAX_RENDERED_CHAT_MESSAGES + 10
+
+    asyncio.run(scenario())
+
+
+def test_old_messages_compact_to_plain_text_for_fast_renders():
+    from capture_help.gui.app import RICH_RECENT_MESSAGES
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            for index in range(RICH_RECENT_MESSAGES + 4):
+                app.add_message("assistant", f"## Heading {index}\n\nbody **{index}**")
+            app._compact_old_messages()
+            await pilot.pause()
+
+            assert len(app.query(".plain-message")) == 4
+            assert len(app.query(".chat-message Markdown")) == RICH_RECENT_MESSAGES
+            # the newest message still renders rich markdown
+            newest = list(app.query(".chat-message"))[-1]
+            assert newest.markdown is not None
+            assert "Heading" in newest.markdown.source
 
     asyncio.run(scenario())
 

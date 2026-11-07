@@ -464,7 +464,8 @@ The interface is a clean **two-state machine** — exactly one primary view is r
 
 - **Entering a message (or any slash command / quick action / persona greeting) immediately transitions to Chat Mode.**
 - The input **placeholder updates with the state** — `What would you like to build today?` on Home, `Ask Capture Help…` in Chat.
-- Layer stack (bottom → top): **wallpaper → dark overlay → glass UI → popup → cursor**. The wallpaper and dark overlay always render *beneath* the opaque UI panels, so artwork can never bleed through text.
+- The interface is intentionally plain: flat opaque surfaces, one-line header, no fades or hover animations, and a compact single-box composer. Nothing decorative competes with the conversation.
+- Only the newest messages keep rich Markdown (code cards, highlighting); older messages render as plain text so refresh cost stays low as chats grow.
 
 ### Keyboard Shortcuts
 
