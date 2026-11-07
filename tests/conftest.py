@@ -1,6 +1,5 @@
 import importlib
 import pkgutil
-import shutil
 
 import pytest
 
@@ -13,29 +12,18 @@ MOCK_OUTPUT = "## Mocked Offline Output\n\nGenerated without a network call."
 
 @pytest.fixture(autouse=True)
 def isolated_config(tmp_path, monkeypatch):
-    """Redirect config writes (and the personas dir) to a temp location.
+    """Redirect config writes to a temp location.
 
     Without this, tests that call `save_config` would overwrite the user's real
     ~/.config/capture-help/.env (wiping their DeepSeek API key). Everything runs
-    against tmp_path instead. Personas bundled with the real install are copied
-    in so persona-dependent tests still find them.
+    against tmp_path instead.
     """
-    import capture_help.persona as persona_mod
     import capture_help.mcp.config as mcp_config
-
-    real_config_dir = config_mod.CONFIG_DIR
-    real_personas_dir = persona_mod.PERSONAS_DIR
 
     cfg = tmp_path / "config"
     monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg / ".env")
-    monkeypatch.setattr(persona_mod, "CONFIG_DIR", cfg)
-    monkeypatch.setattr(persona_mod, "PERSONAS_DIR", cfg / "personas")
-    monkeypatch.setattr(persona_mod, "ACTIVE_PERSONA_FILE", cfg / "active_persona")
     monkeypatch.setattr(mcp_config, "MCP_CONFIG_FILE", cfg / "mcp.json")
-
-    if real_personas_dir.exists():
-        shutil.copytree(real_personas_dir, cfg / "personas", dirs_exist_ok=True)
 
 
 class FakeProvider:

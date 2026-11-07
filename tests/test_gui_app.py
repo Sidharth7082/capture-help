@@ -318,7 +318,7 @@ def test_home_and_chat_views_are_mutually_exclusive_after_fade():
 
 def test_any_message_transitions_home_to_chat():
     """A message landing via add_message (not just _send) must leave Home —
-    covers slash commands, quick actions and persona greetings that append a
+    covers slash commands and quick actions that append a
     message directly without a full _send."""
     async def scenario():
         app = CaptureHelpApp()
@@ -483,9 +483,6 @@ def test_ctrl_shift_m_and_ctrl_p_open_pickers():
             assert app.screen is not None
             app.screen.dismiss(None)
             await pilot.pause()
-            app.action_open_persona_picker()
-            await pilot.pause()
-            assert app.screen is not None
 
     asyncio.run(scenario())
 
@@ -1428,13 +1425,6 @@ def test_command_palette_enabled_and_bindings():
             assert isinstance(app.screen, CommandPalette)
             app.screen.dismiss()
             await pilot.pause()
-            # ctrl+p still opens the persona picker (not the palette)
-            app.action_open_persona_picker()
-            await pilot.pause()
-            await pilot.pause()
-            from capture_help.gui.modals import PersonaPickerScreen
-
-            assert isinstance(app.screen, PersonaPickerScreen)
 
     asyncio.run(scenario())
 

@@ -47,32 +47,6 @@ class ModelPickerScreen(BaseModal):
         self.dismiss(event.option.id)
 
 
-class PersonaPickerScreen(BaseModal):
-    """Persona / character card selector."""
-
-    def __init__(self, options: List[tuple], active_name: Optional[str] = None, **kwargs):
-        super().__init__("Select Character Persona", **kwargs)
-        self.options = options
-        self.active_name = active_name
-
-    def compose(self) -> ComposeResult:
-        opts = []
-        for key, display, desc, is_current in self.options:
-            label = display
-            if desc:
-                label = f"{label}  —  {desc[:40]}"
-            if is_current:
-                label = f"{label}   ✓ active"
-            opts.append(Option(label, id=key))
-        with Vertical(classes="modal-card"):
-            yield Label(self.title_text, classes="modal-title")
-            yield OptionList(*opts, id="persona-options")
-            yield Label("↑/↓ navigate · Enter select · Esc cancel", classes="modal-hint")
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self.dismiss(event.option.id)
-
-
 class ConfirmScreen(BaseModal):
     """Yes/No confirmation used before executing commands or writing files."""
 

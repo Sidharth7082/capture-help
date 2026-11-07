@@ -36,13 +36,12 @@
   - [3. Security & Privacy](#3-security--privacy)
   - [4. Productivity & Utilities](#4-productivity--utilities)
   - [5. Model Context Protocol (MCP)](#5-model-context-protocol-mcp)
-  - [Command Groups](#command-groups) — `local` · `persona` · `arch` · `memory`/`learn` · `hermes`
+  - [Command Groups](#command-groups) — `local` · `arch` · `memory`/`learn` · `hermes`
 - [🖥️ GUI Chat](#-gui-chat)
   - [State Machine Architecture](#state-machine-architecture)
   - [Keyboard Shortcuts](#keyboard-shortcuts)
   - [Slash Commands](#slash-commands)
 - [💡 Workflow Examples](#-workflow-examples)
-- [🎭 Personas & Customization](#-personas--customization)
 - [⌨️ Shell Aliases](#-shell-aliases)
 - [❓ FAQ & Troubleshooting](#-faq--troubleshooting)
 - [🛠️ Development & Contributing](#-development--contributing)
@@ -111,7 +110,7 @@ capture-help summarize          # summarize your uncommitted work
 │  ┌─────▼──────────────▼───────────────────▼─────┐               │
 │  │  Core services                                │               │
 │  │  • indexer (SQLite)   • prompter (compiler)   │               │
-│  │  • persona manager    • memory (rules)        │               │
+│  │  • memory (rules)      • plugin registry      │               │
 │  │  • git diff engine    • secret scanners       │               │
 │  │  • MCP client/server  • plugin registry       │               │
 │  └───────────────────────────────────────────────┘               │
@@ -126,7 +125,7 @@ capture-help summarize          # summarize your uncommitted work
 | Indexing | Local SQLite database for sub-second codebase lookup |
 | Interop | Model Context Protocol (MCP) stdio + Streamable HTTP transports |
 | Security | Custom secret scanners + semi-autonomous pre-commit review hook |
-| Persistence | SQLite (`history`, `memory`, `index`) + JSON persona/profile files |
+| Persistence | SQLite (`history`, `memory`, `index`) + JSON profile files |
 
 ### Repository layout
 
@@ -136,14 +135,13 @@ capture-help/
 │   ├── cli.py                 # Typer entry point (50+ commands)
 │   ├── agent.py               # streaming agent + tool parsing
 │   ├── provider.py / deepseek.py   # provider abstraction + cloud client
-│   ├── config.py / persona.py / memory.py
+│   ├── config.py / memory.py
 │   ├── project.py             # codebase fingerprinting
 │   ├── history.py             # chat session persistence
 │   ├── gui/                   # Textual glass chat UI (app, widgets, theme, styles)
 │   ├── mcp/                   # MCP client + server
 │   ├── providers/ollama.py    # local model client
 │   └── commands/              # one module per CLI command
-├── personas/                  # shipped persona templates
 ├── tests/                     # pytest suite (176+ tests)
 └── pyproject.toml
 ```
@@ -175,7 +173,7 @@ capture-help/
    - Renders visual `a/file` vs `b/file` color diffs before touching your disk.
    - Interactive confirmation prompt with optional automatic `.bak` backups.
 3. **Glass Chat GUI (`chat`)**
-   - A full-screen, keyboard-driven conversation UI with a two-state (Home ⇄ Chat) renderer, opaque glass bubbles, model/persona pickers, and streaming markdown.
+   - A full-screen, keyboard-driven conversation UI with a two-state (Home ⇄ Chat) renderer, opaque message bubbles, a model picker, and streaming markdown.
 4. **Hermès Autonomous Agent (`hermes`)**
    - Runs complex iterative tasks, auto-executes terminal commands with permission checks, inspects results, and fixes errors in a loop.
 5. **Multi-Agent Teamwork (`team`)**
@@ -266,7 +264,6 @@ DEFAULT_PROVIDER=deepseek
 
 # ── Optional ──────────────────────────────────────────────
 OLLAMA_URL=http://localhost:11434       # custom local Ollama endpoint
-CAPTURE_HELP_PERSONA=aggressive         # default persona for new sessions
 CAPTURE_HELP_CONTEXT_TOKENS=0           # input-token cap (0 = use provider model limit)
 CAPTURE_HELP_CONTEXT_MESSAGES=0         # optional message-count cap (0 = disabled)
 CAPTURE_HELP_CONFIG_DIR=~/.config/capture-help
@@ -279,7 +276,6 @@ CAPTURE_HELP_CONFIG_DIR=~/.config/capture-help
 | `DEEPSEEK_MODEL` | `deepseek-chat` | Active model name (see `capture-help models`) |
 | `DEFAULT_PROVIDER` | `deepseek` | `deepseek`, `ollama`, `openai`, or `openrouter` |
 | `OLLAMA_URL` | `http://localhost:11434` | Local Ollama server endpoint |
-| `CAPTURE_HELP_PERSONA` | — | Persona applied by default |
 | `CAPTURE_HELP_CONTEXT_TOKENS` | `0` | Maximum estimated input tokens (`0` = use provider-advertised model limit when available) |
 | `CAPTURE_HELP_CONTEXT_MESSAGES` | `0` | Optional additional message-count cap (`0` = disabled); history is otherwise pruned by estimated tokens |
 | `CAPTURE_HELP_CONFIG_DIR` | `~/.config/capture-help` | Where config/history/index are stored |
@@ -407,12 +403,6 @@ TOOL_MCP: files.read_file | {"path": "README.md"}
 | `local pull <model>` | Pull a model (e.g. `gemma3:12b`). |
 | `local use <model>` | Activate a local model globally (routs all commands locally). |
 
-**`persona` — character personas**
-
-```
-persona list | show | templates | create | edit | activate | reset | delete | export | import
-```
-
 **`arch` — Arch Linux power tools**
 
 | Command | Description |
@@ -462,7 +452,7 @@ The interface is a clean **two-state machine** — exactly one primary view is r
  └────────────────────────────────┘    └──────────┴───────────────────┘
 ```
 
-- **Entering a message (or any slash command / quick action / persona greeting) immediately transitions to Chat Mode.**
+- **Entering a message (or any slash command / quick action) immediately transitions to Chat Mode.**
 - The input **placeholder updates with the state** — `What would you like to build today?` on Home, `Ask Capture Help…` in Chat.
 - The interface is intentionally plain: flat opaque surfaces, one-line header, no fades or hover animations, and a compact single-box composer. Nothing decorative competes with the conversation.
 - Only the newest messages keep rich Markdown (code cards, highlighting); older messages render as plain text so refresh cost stays low as chats grow.
@@ -475,7 +465,6 @@ The interface is a clean **two-state machine** — exactly one primary view is r
 | `Enter` | Insert a new line in the prompt |
 | `Ctrl+Enter` | Send the message |
 | `Ctrl+Shift+M` | Open the model picker (DeepSeek ↔ Ollama/Gemma) |
-| `Ctrl+P` | Open the persona picker |
 | `Ctrl+K` | Search the codebase |
 | `Ctrl+L` | Clear the chat (returns to Home State) |
 | `Ctrl+N` | New chat session |
@@ -492,7 +481,6 @@ The multiline prompt accepts large text pastes with `Ctrl+V`. With Linux `wl-pas
 | :--- | :--- |
 | `/gemma`, `/flash`, `/coder`, `/r1` | Switch model instantly |
 | `/model` | View / switch the active AI model |
-| `/persona <name>` | Switch character persona live |
 | `/read <file>` | Load a file into context |
 | `/run <cmd>` | Run a shell command (with confirmation) |
 | `/search <q>` | Search the codebase |
@@ -591,39 +579,6 @@ capture-help audit             # audit dependencies for CVEs
 capture-help refactor ApiClient HttpClient   # renames everywhere
 capture-help refactor --help                 # see all options
 ```
-
----
-
-## 🎭 Personas & Customization
-
-`capture-help` ships with dynamic character personas and a full CLI to create your own. A persona is just a system-prompt overlay — **you fully control its behavior, tone, and rules**.
-
-Built-in templates (start with `capture-help persona create <name> --template <t>`):
-
-- **aggressive**: Highly concise, brutal efficiency, zero fluff, direct code focus.
-- **senior**: Senior Architect perspective emphasizing design patterns, edge cases, and scalability.
-
-Manage personas from the CLI:
-
-```bash
-capture-help persona list
-capture-help persona templates
-capture-help persona create mybot --template aggressive
-capture-help persona create mybot                   # free-form interactive
-capture-help persona activate mybot                 # apply to all sessions
-capture-help persona show mybot                     # view full definition
-capture-help persona edit mybot                     # tweak prompt in $EDITOR
-capture-help persona export mybot --out mybot.json  # share/back up
-capture-help persona import mybot.json
-capture-help persona delete mybot
-capture-help persona reset                          # back to default assistant
-```
-
-Set a persona for a single session:
-```bash
-capture-help chat --persona aggressive
-```
-Within the GUI chat, use `/persona` to switch live (`/persona gehrman`, `/persona 1`, `/persona reset`).
 
 ---
 

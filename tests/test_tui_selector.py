@@ -7,7 +7,7 @@ def test_select_option_dataclass():
         key="gehrman",
         title="Gehrman Sparrow",
         description="Cold adventurer",
-        badge="[Persona]",
+        badge="[Example]",
         is_current=True,
     )
     assert opt.key == "gehrman"

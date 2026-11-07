@@ -51,7 +51,6 @@ from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.widgets import Button, Label, Static, TextArea
 
 from capture_help import config as config_mod
-from capture_help import persona as persona_mod
 from capture_help.cache import get_cached_system_prompt
 from capture_help.config import settings, save_config
 from capture_help.deepseek import DEEPSEEK_MODELS
@@ -60,7 +59,6 @@ from capture_help.gui.modals import (
     ContextViewerScreen,
     ImagePathScreen,
     ModelPickerScreen,
-    PersonaPickerScreen,
     SearchModal,
     SlashHelpScreen,
 )
@@ -111,7 +109,6 @@ SLASH_COMMANDS = [
     ("/coder", "Switch to DeepSeek Coder"),
     ("/r1", "Switch to DeepSeek Reasoner R1"),
     ("/model", "View / switch the active AI model"),
-    ("/persona", "Switch character persona"),
     ("/read <file>", "Load a file into context"),
     ("/run <cmd>", "Run a shell command"),
     ("/search <q>", "Search the codebase"),
@@ -135,7 +132,6 @@ class CaptureHelpCommands(Provider):
             Hit(8.0, "Search codebase", app.action_search, "Keyword search the workspace (ctrl+k)"),
             Hit(7.0, "Clear conversation", app.action_clear_chat, "Reset the current chat (ctrl+l)"),
             Hit(6.0, "Open model picker", app.action_open_model_picker, "Switch the active AI model"),
-            Hit(5.0, "Open persona picker", app.action_open_persona_picker, "Switch character persona"),
             Hit(4.0, "Open context viewer", app.action_open_context, "Inspect what the model has in context (ctrl+o)"),
             Hit(3.0, "Toggle debug panel", app.action_toggle_debug, "Show/hide the debug log (ctrl+d)"),
             Hit(2.0, "Slash command help", app.action_show_slash_help, "List available /commands"),
@@ -167,11 +163,10 @@ class CaptureHelpApp(App[None]):
         ("ctrl+n", "new_chat", "New chat"),
         ("ctrl+c", "cancel_or_quit", "Cancel / quit"),
         ("ctrl+shift+m", "open_model_picker", "Model picker"),
-        ("ctrl+p", "open_persona_picker", "Persona picker"),
         ("ctrl+o", "open_context", "Context viewer"),
     ]
 
-    # Command palette lives on ctrl+shift+p so ctrl+p stays free for personas.
+    # Command palette lives on ctrl+shift+p.
     ENABLE_COMMAND_PALETTE = True
     COMMAND_PALETTE_BINDING = "ctrl+shift+p"
     COMMANDS = {CaptureHelpCommands}
@@ -439,8 +434,7 @@ class CaptureHelpApp(App[None]):
 
     def _seed_initial_messages(self) -> None:
         self._render_history_messages(self.history)
-        # A fresh session stays on the landing screen. Personas greet you when
-        # activated via `/persona` — no auto-opened conversation here.
+        # A fresh session stays on the landing screen.
 
     def _render_history_messages(self, messages: List[Dict[str, str]]) -> None:
         visible = [
@@ -581,7 +575,7 @@ class CaptureHelpApp(App[None]):
         base = self._cached_system_prompt
         if mcp_summary:
             base = f"{base}\n\n{mcp_summary}"
-        return persona_mod.build_system_prompt(base)
+        return base
 
     def _save_session(self) -> None:
         try:
@@ -1506,21 +1500,6 @@ class CaptureHelpApp(App[None]):
             )
             return True
 
-        if sub in ("/persona", "/character"):
-            if arg:
-                self._activate_persona(arg.strip())
-                return True
-            options = [("default", "Standard AI Assistant", "Default coding assistant", False)]
-            active = persona_mod.get_active_persona()
-            active_name = active.name if active else None
-            for p in persona_mod.list_personas():
-                options.append((p.name, p.display_name, (p.description or "")[:50], p.name == active_name))
-            self.push_screen(
-                PersonaPickerScreen(options, active_name=active_name),
-                self._on_persona_picked,
-            )
-            return True
-
         if sub in ("/gemma", "/gemma12b"):
             return self._switch_model("gemma3:12b")
         if sub == "/gemma27b":
@@ -1622,15 +1601,6 @@ class CaptureHelpApp(App[None]):
         if key:
             self._switch_model(key)
 
-    def _on_persona_picked(self, key) -> None:
-        if not key:
-            return
-        if key == "default":
-            persona_mod.reset_persona()
-            self.notify("Persona reset to default assistant.")
-        else:
-            self._activate_persona(key)
-
     def _switch_model(self, key: str) -> bool:
         data = DEEPSEEK_MODELS.get(key)
         if not data:
@@ -1647,19 +1617,6 @@ class CaptureHelpApp(App[None]):
         self._log_debug(f"[cyan]model[/cyan] -> {key}")
         return True
 
-    def _activate_persona(self, name: str) -> None:
-        try:
-            p = persona_mod.activate_persona(name)
-        except persona_mod.PersonaError as e:
-            self.notify(str(e), severity="error")
-            return
-        self.notify(f"Persona active: {p.display_name}")
-        self._log_debug(f"[cyan]persona[/cyan] -> {p.display_name}")
-        if getattr(p, "first_message", None):
-            self.history.append({"role": "assistant", "content": p.first_message})
-            self.add_message("assistant", p.first_message)
-            self._save_session()
-
     # ------------------------------------------------------------------ #
     # Key bindings
     # ------------------------------------------------------------------ #
@@ -1671,17 +1628,6 @@ class CaptureHelpApp(App[None]):
         self.push_screen(
             ModelPickerScreen(DEEPSEEK_MODELS, current=settings.deepseek_model),
             self._on_model_picked,
-        )
-
-    def action_open_persona_picker(self) -> None:
-        options = [("default", "Standard AI Assistant", "Default coding assistant", False)]
-        active = persona_mod.get_active_persona()
-        active_name = active.name if active else None
-        for p in persona_mod.list_personas():
-            options.append((p.name, p.display_name, (p.description or "")[:50], p.name == active_name))
-        self.push_screen(
-            PersonaPickerScreen(options, active_name=active_name),
-            self._on_persona_picked,
         )
 
     def action_open_context(self) -> None:

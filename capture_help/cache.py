@@ -31,7 +31,7 @@ Assistant: Checking available disk space...
 TOOL_RUN: df -h"""
 
 def get_cached_system_prompt(project_name: str, languages: list) -> str:
-    """Build dynamic, time-aware system prompt with real system timestamp, learned background memory, and user persona model."""
+    """Build dynamic, time-aware system prompt with real system timestamp, learned background memory, and user preferences."""
     langs_str = ", ".join(languages) if languages else "Generic"
     now_str = datetime.now().strftime("%A, %B %d, %Y - %I:%M %p %Z")
     username = getpass.getuser()
@@ -43,9 +43,9 @@ def get_cached_system_prompt(project_name: str, languages: list) -> str:
         mem_text = "\nLearned Background Memory Rules:\n" + "\n".join([f"- {m['content']}" for m in memories])
 
     profile = get_user_profile()
-    persona_text = ""
+    preferences_text = ""
     if profile and "learned_preferences" in profile:
-        persona_text = "\nLearned User Persona & Deepening Model:\n" + "\n".join([f"- {pref}" for pref in profile["learned_preferences"]])
+        preferences_text = "\nLearned User Preferences:\n" + "\n".join([f"- {pref}" for pref in profile["learned_preferences"]])
 
     return (
         f"{STATIC_SYSTEM_PREFIX}\n\n"
@@ -57,7 +57,7 @@ def get_cached_system_prompt(project_name: str, languages: list) -> str:
         f"- Project Name: {project_name}\n"
         f"- Project Languages: {langs_str}"
         f"{mem_text}"
-        f"{persona_text}"
+        f"{preferences_text}"
     )
 
 def render_cache_stats(cache_hit_tokens: int, prompt_tokens: int):

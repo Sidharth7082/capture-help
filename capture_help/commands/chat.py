@@ -54,9 +54,6 @@ SLASH_COMMAND_SUGGESTIONS = [
     ("/coder", "Switch to DeepSeek Coder model"),
     ("/r1", "Switch to DeepSeek Reasoner R1 model"),
     ("/model", "View or switch active AI model"),
-    ("/persona", "Switch active character persona (e.g. /persona 1, /persona gehrman, /persona reset)"),
-    ("/gehrman", "1-click shortcut to activate Gehrman Sparrow persona"),
-    ("/character", "Alias for /persona character card switcher"),
     ("/plan", "Create step-by-step implementation plan"),
     ("/read", "Read file content into AI chat context"),
     ("/run", "Run terminal shell command and attach output"),
@@ -71,23 +68,7 @@ if PROMPT_TOOLKIT_AVAILABLE:
     class SlashCompleter(Completer):
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
-            if text.startswith("/persona ") or text.startswith("/character "):
-                prefix, *rest = text.split(maxsplit=1)
-                sub_text = rest[0] if rest else ""
-                from capture_help import persona as persona_mod
-                options = [("list", "List available character personas"), ("reset", "Reset back to default AI Assistant")]
-                for p in persona_mod.list_personas():
-                    options.append((p.name, f"{p.display_name} — {p.description[:40]}"))
-                for opt, desc in options:
-                    if opt.startswith(sub_text):
-                        full_cmd = f"{prefix} {opt}"
-                        yield Completion(
-                            full_cmd,
-                            start_position=-len(text),
-                            display=HTML(f"<bold><cyan>{full_cmd}</cyan></bold>"),
-                            display_meta=HTML(f"<italic>{desc}</italic>")
-                        )
-            elif text.startswith("/"):
+            if text.startswith("/"):
                 for cmd, desc in SLASH_COMMAND_SUGGESTIONS:
                     if cmd.startswith(text):
                         yield Completion(
@@ -105,87 +86,6 @@ def handle_slash_command(cmd_text: str, history: List[Dict[str, str]]) -> Tuple[
     if sub in ["/scan", "/virus"]:
         from capture_help.commands.scan import scan_command
         scan_command()
-        return True, None
-
-    if sub in ["/gehrman", "/sparrow"]:
-        from capture_help import persona as persona_mod
-        p = persona_mod.activate_persona("gehrman")
-        console.print(f"[bold green]{persona_mod.render_banner(p)}[/bold green]")
-        return True, None
-
-    if sub in ["/persona", "/character"]:
-        from capture_help import persona as persona_mod
-        from capture_help.tui_selector import SelectOption, run_tui_selector
-
-        personas = persona_mod.list_personas()
-        active = persona_mod.get_active_persona()
-        active_name = active.name if active else None
-
-        if not arg:
-            options = [
-                SelectOption(
-                    key="default",
-                    title="Standard AI Assistant",
-                    description="Default terminal coding & system administration assistant.",
-                    badge="[Default]",
-                    is_current=(active_name is None),
-                )
-            ]
-            for p in personas:
-                options.append(
-                    SelectOption(
-                        key=p.name,
-                        title=p.display_name,
-                        description=p.description or p.greeting or "Custom character persona card",
-                        badge="[Character Card]",
-                        is_current=(active_name == p.name),
-                    )
-                )
-
-            chosen = run_tui_selector("Select Character Persona", options)
-            if not chosen:
-                return True, None
-            if chosen.key == "default":
-                persona_mod.reset_persona()
-                console.print("[bold green]✓ Persona reset to default AI Assistant.[/bold green]")
-                return True, None
-            else:
-                p = persona_mod.activate_persona(chosen.key)
-                console.print(f"[bold green]{persona_mod.render_banner(p)}[/bold green]")
-                if p.first_message:
-                    history.clear()
-                    history.append({"role": "assistant", "content": p.first_message})
-                    console.print(f"[bold magenta]💬 {p.display_name}:[/bold magenta] [italic]{p.first_message}[/italic]")
-                return True, None
-
-        if arg.strip().isdigit():
-            num = int(arg.strip())
-            if num == 0:
-                persona_mod.reset_persona()
-                console.print("[bold green]✓ Persona reset to default AI Assistant.[/bold green]")
-                return True, None
-            elif 1 <= num <= len(personas):
-                p = persona_mod.activate_persona(personas[num - 1].name)
-                console.print(f"[bold green]{persona_mod.render_banner(p)}[/bold green]")
-                if p.first_message:
-                    history.clear()
-                    history.append({"role": "assistant", "content": p.first_message})
-                    console.print(f"[bold magenta]💬 {p.display_name}:[/bold magenta] [italic]{p.first_message}[/italic]")
-                return True, None
-
-        if arg.strip() in ["reset", "default"]:
-            persona_mod.reset_persona()
-            console.print("[bold green]✓ Persona reset to default AI Assistant.[/bold green]")
-        else:
-            try:
-                p = persona_mod.activate_persona(arg.strip())
-                console.print(f"[bold green]{persona_mod.render_banner(p)}[/bold green]")
-                if p.first_message:
-                    history.clear()
-                    history.append({"role": "assistant", "content": p.first_message})
-                    console.print(f"[bold magenta]💬 {p.display_name}:[/bold magenta] [italic]{p.first_message}[/italic]")
-            except persona_mod.PersonaError as e:
-                console.print(f"[bold red]{e}[/bold red]")
         return True, None
 
     if sub in ["/learn", "/memory"]:
