@@ -10,6 +10,7 @@ from capture_help.config import settings
 from capture_help.provider import BaseLLMProvider, ProviderError
 
 console = Console()
+_MODEL_CONTEXT_LIMITS: Dict[str, Tuple[int, int]] = {}
 
 @dataclass
 class TokenUsageStats:
@@ -101,6 +102,47 @@ class DeepSeekProvider(BaseLLMProvider):
             api_key=self.api_key or "ollama",
             base_url=self.base_url,
         )
+
+    def get_context_limits(self) -> Optional[Tuple[int, int]]:
+        """Return the model's advertised (total, max-output) token limits."""
+        cached = _MODEL_CONTEXT_LIMITS.get(self.model)
+        if cached is not None:
+            return cached
+        response = self.client.with_options(timeout=5.0).models.list()
+        models = list(response.data)
+        selected = next(
+            (item for item in models if getattr(item, "id", None) == self.model),
+            None,
+        )
+        if selected is None and self.model == "deepseek-v4-flash":
+            selected = next(
+                (
+                    item
+                    for item in models
+                    if getattr(item, "id", None) == "deepseek-flash"
+                ),
+                None,
+            )
+        if selected is None:
+            return None
+
+        extra = getattr(selected, "model_extra", None) or {}
+        context_window = getattr(selected, "context_window", None) or extra.get(
+            "context_window"
+        )
+        max_output = getattr(selected, "max_output_tokens", None) or extra.get(
+            "max_output_tokens"
+        )
+        try:
+            context_window = int(context_window)
+            max_output = int(max_output) if max_output else min(8192, context_window // 4)
+        except (TypeError, ValueError):
+            return None
+        if context_window <= 0 or max_output <= 0:
+            return None
+        limits = (context_window, min(max_output, context_window // 2))
+        _MODEL_CONTEXT_LIMITS[self.model] = limits
+        return limits
 
     def calculate_cost(self, prompt_tokens: int, completion_tokens: int, cache_hit_tokens: int = 0) -> float:
         pricing = DEEPSEEK_MODELS.get(self.model, {"input_cost_per_m": 0.0, "cache_cost_per_m": 0.0, "output_cost_per_m": 0.0})
@@ -214,4 +256,3 @@ def ask_deepseek(prompt: str, system_prompt: Optional[str] = None, model: Option
     provider = get_provider(model=model)
     response, _ = provider.completion([{"role": "user", "content": prompt}], system_prompt=system_prompt)
     return response
-

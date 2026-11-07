@@ -267,7 +267,8 @@ DEFAULT_PROVIDER=deepseek
 # ── Optional ──────────────────────────────────────────────
 OLLAMA_URL=http://localhost:11434       # custom local Ollama endpoint
 CAPTURE_HELP_PERSONA=aggressive         # default persona for new sessions
-CAPTURE_HELP_CONTEXT_MESSAGES=30        # chat context window (0 = unlimited)
+CAPTURE_HELP_CONTEXT_TOKENS=0           # input-token cap (0 = use provider model limit)
+CAPTURE_HELP_CONTEXT_MESSAGES=0         # optional message-count cap (0 = disabled)
 CAPTURE_HELP_CONFIG_DIR=~/.config/capture-help
 ```
 
@@ -279,8 +280,11 @@ CAPTURE_HELP_CONFIG_DIR=~/.config/capture-help
 | `DEFAULT_PROVIDER` | `deepseek` | `deepseek`, `ollama`, `openai`, or `openrouter` |
 | `OLLAMA_URL` | `http://localhost:11434` | Local Ollama server endpoint |
 | `CAPTURE_HELP_PERSONA` | — | Persona applied by default |
-| `CAPTURE_HELP_CONTEXT_MESSAGES` | `30` | Conversation window sent to the model (`0` = send everything) |
+| `CAPTURE_HELP_CONTEXT_TOKENS` | `0` | Maximum estimated input tokens (`0` = use provider-advertised model limit when available) |
+| `CAPTURE_HELP_CONTEXT_MESSAGES` | `0` | Optional additional message-count cap (`0` = disabled); history is otherwise pruned by estimated tokens |
 | `CAPTURE_HELP_CONFIG_DIR` | `~/.config/capture-help` | Where config/history/index are stored |
+
+In the GUI, token limits are retrieved from DeepSeek's model metadata when available. Other providers use an estimated 64k context window unless a lower `CAPTURE_HELP_CONTEXT_TOKENS` cap is configured. Clear user corrections (for example, messages beginning “Correction:” or “I meant…”) are stored locally as bounded, deduplicated memory; model weights are not trained or changed. Unhandled GUI exceptions save the conversation and write a credential-redacted traceback to `~/.config/capture-help/logs/gui-crash.log` instead of immediately closing the chat. To keep long conversations responsive, streamed replies render as plain text until complete, UI token updates are batched, and only the latest 40 messages are mounted at once; full session history remains saved and is sent within the model's context budget.
 
 > **Auto-routing**: any model tagged like `gemma3:12b` or any localhost base URL automatically routes all commands to your local Ollama server — no API key required.
 
@@ -467,7 +471,8 @@ The interface is a clean **two-state machine** — exactly one primary view is r
 | Key | Action |
 | :--- | :--- |
 | `/` | Pop up slash-command autocomplete; filter as you type (`↑`/`↓` navigate, `Tab` fill, `Esc` dismiss) |
-| `Enter` | Run the highlighted command or send the message |
+| `Enter` | Insert a new line in the prompt |
+| `Ctrl+Enter` | Send the message |
 | `Ctrl+Shift+M` | Open the model picker (DeepSeek ↔ Ollama/Gemma) |
 | `Ctrl+P` | Open the persona picker |
 | `Ctrl+K` | Search the codebase |
@@ -477,6 +482,8 @@ The interface is a clean **two-state machine** — exactly one primary view is r
 | `Ctrl+C` | Cancel generation / quit |
 
 The model name in the bottom status bar is clickable and opens the model picker. The sidebar also provides New chat and Search Project actions.
+
+The multiline prompt accepts large text pastes with `Ctrl+V`. With Linux `wl-paste` or `xclip` installed, `Ctrl+V` also attaches a PNG, JPEG, GIF, or WebP image from the system clipboard; the **+ Image** action remains available for local files. Up to three images (10 MiB each) can be attached to a message. Images are encoded only when sent; saved sessions retain local file paths, not image bytes, so those files must remain available to continue the conversation. DeepSeek image input requires V4-Flash; local Ollama requires an installed vision-capable model. Cloud-provider requests send image data to that provider.
 
 ### Slash Commands
 

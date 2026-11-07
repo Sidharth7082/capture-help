@@ -30,10 +30,15 @@ cannot corrupt the alternate screen.
 """
 
 import io
+import base64
 import os
 import re
 import sys
 import queue
+import shutil
+import subprocess
+import time
+import traceback
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -43,8 +48,9 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.command import CommandPalette, Hit, Provider
 from textual.containers import Horizontal, ScrollableContainer, Vertical
-from textual.widgets import Button, Input, Label, Static
+from textual.widgets import Button, Label, Static, TextArea
 
+from capture_help import config as config_mod
 from capture_help import persona as persona_mod
 from capture_help.cache import get_cached_system_prompt
 from capture_help.config import settings, save_config
@@ -52,6 +58,7 @@ from capture_help.deepseek import DEEPSEEK_MODELS
 from capture_help.gui.modals import (
     ConfirmScreen,
     ContextViewerScreen,
+    ImagePathScreen,
     ModelPickerScreen,
     PersonaPickerScreen,
     SearchModal,
@@ -74,16 +81,23 @@ from capture_help.gui.widgets import (
     workspace_summary,
 )
 from capture_help.history import list_sessions, load_session, save_session
-from capture_help.memory import get_all_memories
+from capture_help.memory import add_memory, get_all_memories
 from capture_help.project import fingerprint_project
 from capture_help.provider import ProviderError
 from capture_help.utils import get_git_diff
 
 MAX_TOOL_TURNS = 5
 CONFIRM_TIMEOUT = 120
-# Context window shown in the live footer label; per-model values may refine
-# this later, so it is a single named constant rather than a magic "32k".
-CONTEXT_WINDOW_TOKENS = 32_000
+# Used until the selected provider advertises its model limits.
+DEFAULT_CONTEXT_WINDOW_TOKENS = 64_000
+DEFAULT_MAX_OUTPUT_TOKENS = 8_000
+STREAM_RENDER_INTERVAL = 0.06
+MAX_RENDERED_CHAT_MESSAGES = 40
+STREAM_UI_BATCH_INTERVAL = 0.10
+STREAM_UI_BATCH_CHARS = 8_192
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_IMAGES_PER_MESSAGE = 3
+MAX_TOTAL_IMAGE_BYTES = 30 * 1024 * 1024
 
 # Input placeholder is scoped to the current view state.
 HOME_PLACEHOLDER = "Explain code, fix bugs, or search your workspace…"
@@ -162,7 +176,7 @@ class CaptureHelpApp(App[None]):
 
     def __init__(
         self,
-        initial_messages: Optional[List[Dict[str, str]]] = None,
+        initial_messages: Optional[List[Dict[str, object]]] = None,
         session_id: Optional[str] = None,
         **kwargs,
     ):
@@ -174,7 +188,13 @@ class CaptureHelpApp(App[None]):
 
         self.initial_messages = initial_messages or []
         self.sess_id = session_id or str(uuid.uuid4())[:8]
-        self.history: List[Dict[str, str]] = list(self.initial_messages)
+        self.history: List[Dict[str, object]] = list(self.initial_messages)
+        self._pending_images: List[str] = []
+        self._hidden_chat_messages = 0
+        self._context_window_tokens = DEFAULT_CONTEXT_WINDOW_TOKENS
+        self._max_output_tokens = DEFAULT_MAX_OUTPUT_TOKENS
+        self._pending_ui_chunks: List[str] = []
+        self._last_stream_render = 0.0
         self._cached_system_prompt = get_cached_system_prompt(
             self.project.get("name", "project"), self.project.get("languages", [])
         )
@@ -256,17 +276,16 @@ class CaptureHelpApp(App[None]):
                 with Vertical(id="input-area"):
                     yield SlashPopup(SLASH_COMMANDS)
                     yield ChatInput(
-                        placeholder=HOME_PLACEHOLDER,
+                        placeholder="Message Capture Help…  (Ctrl+V to paste an image)",
                         id="prompt-input",
                     )
+                    with Horizontal(id="composer-actions"):
+                        yield Button("+ Image", id="attach-image")
+                        yield Label("", id="pending-images")
+                        yield Button("×", id="clear-images", disabled=True)
+                        yield Button("↑  Send", id="send-prompt", variant="primary")
                     yield Label(
-                        "Type / for commands"
-                        f"   {ICONS['search']} Ctrl+K Search"
-                        f"   {ICONS['clear']} Ctrl+L Clear"
-                        f"   {ICONS['debug']} Ctrl+D Debug"
-                        f"   {ICONS['model']} Ctrl+Shift+M Model"
-                        "   🧠 Ctrl+O Context"
-                        "   ⌘ Ctrl+Shift+P Palette",
+                        "Ctrl+V paste text or image · Enter new line · Ctrl+Enter send · Type / for commands",
                         classes="sidebar-item",
                         id="prompt-hints",
                     )
@@ -281,7 +300,9 @@ class CaptureHelpApp(App[None]):
         self._load_default_session_preview()
         self.footer.set_model(settings.deepseek_model)
         self.footer.set_provider()
-        self.footer.set_context(f"0 / {self._fmt_k(CONTEXT_WINDOW_TOKENS)}")
+        self.footer.set_context(
+            f"0 / ~{self._fmt_k(self._context_window_tokens)}"
+        )
         self.footer.set_state("ready")
         self._set_landing(not self.history)
         self.query_one("#prompt-input", ChatInput).focus()
@@ -307,7 +328,7 @@ class CaptureHelpApp(App[None]):
         self.sidebar.set_recent_chats(sessions, active_id=self.sess_id)
         self.sidebar.set_open_files(self._open_files)
         try:
-            memories = get_all_memories()[:8]
+            memories = get_all_memories(limit=8)
         except Exception:  # noqa: BLE001
             memories = []
         self.sidebar.set_memories(memories)
@@ -437,11 +458,47 @@ class CaptureHelpApp(App[None]):
         self._scroll_chat()
 
     def _seed_initial_messages(self) -> None:
-        for m in self.history:
-            if m.get("role") in ("user", "assistant"):
-                self.add_message(m["role"], m.get("content", ""))
+        self._render_history_messages(self.history)
         # A fresh session stays on the landing screen. Personas greet you when
         # activated via `/persona` — no auto-opened conversation here.
+
+    def _render_history_messages(self, messages: List[Dict[str, str]]) -> None:
+        visible = [
+            message
+            for message in messages
+            if message.get("role") in ("user", "assistant")
+        ]
+        self._hidden_chat_messages = max(
+            0, len(visible) - MAX_RENDERED_CHAT_MESSAGES
+        )
+        if self._hidden_chat_messages:
+            self._show_history_notice()
+        for message in visible[-MAX_RENDERED_CHAT_MESSAGES:]:
+            self.add_message(message["role"], message.get("content", ""))
+
+    def _show_history_notice(self) -> None:
+        chat = self.query_one("#chat", ScrollableContainer)
+        try:
+            notice = chat.query_one("#history-trim-notice", Static)
+        except Exception:  # noqa: BLE001
+            notice = Static("", id="history-trim-notice", markup=False)
+            chat.mount(notice, before=0)
+        notice.update(
+            f"Showing the latest {MAX_RENDERED_CHAT_MESSAGES} messages; "
+            f"{self._hidden_chat_messages} older messages remain in session history."
+        )
+
+    def _trim_chat_widgets(self) -> None:
+        """Bound rendered widgets while leaving the persisted/model history intact."""
+        chat = self.query_one("#chat", ScrollableContainer)
+        messages = list(chat.query(ChatMessage))
+        excess = len(messages) - MAX_RENDERED_CHAT_MESSAGES
+        if excess <= 0:
+            return
+        for message in messages[:excess]:
+            message.remove()
+        self._hidden_chat_messages += excess
+        self._show_history_notice()
 
     def _load_default_session_preview(self) -> None:
         # Left empty: recent chats are clickable from the sidebar instead.
@@ -450,12 +507,18 @@ class CaptureHelpApp(App[None]):
     # ------------------------------------------------------------------ #
     # Chat helpers
     # ------------------------------------------------------------------ #
-    def add_message(self, role: str, content: str, sublabel: str | None = None) -> ChatMessage:
+    def add_message(
+        self,
+        role: str,
+        content: str,
+        sublabel: str | None = None,
+        streaming: bool = False,
+    ) -> ChatMessage:
         # Any message means a conversation exists: leave the home dashboard
         # (idempotent) so the two views can never render simultaneously.
         self._enter_chat()
         chat = self.query_one("#chat", ScrollableContainer)
-        msg = ChatMessage(role, content, sublabel=sublabel)
+        msg = ChatMessage(role, content, sublabel=sublabel, streaming=streaming)
         msg.add_class("enter")
         chat.mount(msg)
         chat.scroll_end(animate=True)
@@ -468,12 +531,57 @@ class CaptureHelpApp(App[None]):
         except Exception:  # noqa: BLE001
             pass
 
-    def _prune_history(self) -> List[Dict[str, str]]:
+    def _prune_history(self) -> List[Dict[str, object]]:
+        return self._prune_messages(self.history)
+
+    def _prune_messages(
+        self,
+        messages: List[Dict[str, object]],
+        token_budget: Optional[int] = None,
+    ) -> List[Dict[str, str]]:
+        """Keep the newest complete messages that fit an estimated input budget."""
         try:
-            limit = int(__import__("os").getenv("CAPTURE_HELP_CONTEXT_MESSAGES", "30"))
+            configured_budget = int(os.getenv("CAPTURE_HELP_CONTEXT_TOKENS", "0"))
         except ValueError:
-            limit = 30
-        return self.history if limit <= 0 else self.history[-limit:]
+            configured_budget = 0
+        available = max(
+            1,
+            token_budget
+            if token_budget is not None
+            else self._context_window_tokens - self._max_output_tokens,
+        )
+        if configured_budget > 0:
+            available = min(available, configured_budget)
+
+        try:
+            message_limit = int(os.getenv("CAPTURE_HELP_CONTEXT_MESSAGES", "0"))
+        except ValueError:
+            message_limit = 0
+
+        selected = []
+        used = 0
+        for message in reversed(messages):
+            content = str(message.get("content", ""))
+            image_paths = message.get("image_paths")
+            image_count = len(image_paths) if isinstance(image_paths, list) else 0
+            cost = max(1, (len(content) + 2) // 3) + 4 + image_count * 1024
+            remaining = available - used
+            if cost > remaining:
+                if not selected and remaining > 8:
+                    tail_chars = max(0, (remaining - 14) * 3)
+                    content = "[Earlier content truncated]\n" + content[-tail_chars:]
+                    message = {**message, "content": content}
+                    cost = max(1, (len(content) + 2) // 3) + 4
+                else:
+                    continue
+            if used + cost > available:
+                continue
+            selected.append(message)
+            used += cost
+            if message_limit > 0 and len(selected) >= message_limit:
+                break
+        selected.reverse()
+        return selected
 
     def _build_system_prompt(self) -> str:
         mcp_summary = ""
@@ -573,24 +681,74 @@ class CaptureHelpApp(App[None]):
         self._log_debug("[yellow]Fallback[/yellow] -> local Gemma 3 12B")
 
     @work(thread=True, exclusive=False, group="generate")
-    def _generate(self, pruned: List[Dict[str, str]], system_prompt: str) -> None:
+    def _generate(self, messages: List[Dict[str, object]], system_prompt: str) -> None:
         try:
             provider = self._get_provider()
         except Exception as e:  # noqa: BLE001
             self.call_from_thread(self._on_error, f"Could not initialize provider: {e}")
             return
 
+        context_window = DEFAULT_CONTEXT_WINDOW_TOKENS
+        max_output = DEFAULT_MAX_OUTPUT_TOKENS
+        get_limits = getattr(provider, "get_context_limits", None)
+        if get_limits is not None:
+            try:
+                limits = get_limits()
+                if limits is not None:
+                    context_window, max_output = limits
+                    self.call_from_thread(
+                        self._set_context_limits, context_window, max_output
+                    )
+            except Exception as e:  # noqa: BLE001
+                self.call_from_thread(
+                    self._log_debug,
+                    f"[yellow]Context metadata unavailable; using estimated "
+                    f"{self._fmt_k(context_window)} token window: {e}[/yellow]",
+                )
+        input_budget = max(
+            128,
+            context_window - max_output - (len(system_prompt) + 2) // 3,
+        )
+        pruned = self._prune_messages(messages, token_budget=input_budget)
+
         turn = 0
         while turn <= MAX_TOOL_TURNS:
             try:
-                gen = provider.stream_completion(pruned, system_prompt)
-                reply = ""
+                if (
+                    any(message.get("image_paths") for message in pruned)
+                    and "api.deepseek.com"
+                    in str(getattr(provider, "base_url", "")).lower()
+                    and "flash" not in str(getattr(provider, "model", "")).lower()
+                ):
+                    raise ProviderError(
+                        "Image input requires a vision-capable model. "
+                        "Select DeepSeek V4-Flash or a vision model in Ollama."
+                    )
+                provider_messages = self._encode_image_messages(pruned)
+                gen = provider.stream_completion(provider_messages, system_prompt)
+                reply_parts = []
+                ui_batch = []
+                ui_batch_chars = 0
+                last_ui_flush = time.monotonic()
                 for chunk, stats in gen:
                     if chunk:
-                        reply += chunk
-                        self.call_from_thread(self._on_token, chunk)
+                        reply_parts.append(chunk)
+                        ui_batch.append(chunk)
+                        ui_batch_chars += len(chunk)
+                        now = time.monotonic()
+                        if (
+                            ui_batch_chars >= STREAM_UI_BATCH_CHARS
+                            or now - last_ui_flush >= STREAM_UI_BATCH_INTERVAL
+                        ):
+                            self.call_from_thread(self._on_token, "".join(ui_batch))
+                            ui_batch.clear()
+                            ui_batch_chars = 0
+                            last_ui_flush = now
                     if stats:
                         self.call_from_thread(self._on_stats, stats)
+                if ui_batch:
+                    self.call_from_thread(self._on_token, "".join(ui_batch))
+                reply = "".join(reply_parts)
             except ProviderError as e:
                 self.call_from_thread(self._on_error, str(e))
                 return
@@ -631,7 +789,7 @@ class CaptureHelpApp(App[None]):
                 {"role": "user", "content": f"Tool Output:\n{chr(10).join(outputs)[:20_000]}"},
             )
             self._save_session_threadsafe()
-            pruned = self._prune_history_threadsafe()
+            pruned = self._prune_history_threadsafe(input_budget)
             turn += 1
         self.call_from_thread(self._on_generation_finished)
 
@@ -672,17 +830,98 @@ class CaptureHelpApp(App[None]):
     def _on_token(self, chunk: str) -> None:
         if self._current_message is None:
             self._stop_thinking()
-            self._current_message = self.add_message("assistant", "")
-        self._ui_text += chunk
-        self._current_message.update_markdown(self._ui_text)
+            self._current_message = self.add_message(
+                "assistant", "", streaming=True
+            )
+            self._last_stream_render = time.monotonic()
+        self._pending_ui_chunks.append(chunk)
+        now = time.monotonic()
+        if now - self._last_stream_render >= STREAM_RENDER_INTERVAL:
+            self._flush_streaming_text()
+        elif self._current_message.stream_preview is None:
+            self.call_after_refresh(self._flush_streaming_text)
+
+    def _flush_streaming_text(self) -> None:
+        if not self._pending_ui_chunks:
+            return
+        if (
+            self._current_message is not None
+            and self._current_message.stream_preview is None
+        ):
+            return
+        self._ui_text += "".join(self._pending_ui_chunks)
+        self._pending_ui_chunks.clear()
+        self._last_stream_render = time.monotonic()
+        if self._current_message is None:
+            return
+        self._current_message.update_stream_preview(self._ui_text)
         self._scroll_chat()
+
+    def _finalize_streaming_message(self) -> None:
+        self._flush_streaming_text()
+        if self._current_message is not None:
+            self._current_message.finalize_stream(self._ui_text)
+
+    def _set_context_limits(self, context_window: int, max_output: int) -> None:
+        self._context_window_tokens = context_window
+        self._max_output_tokens = max_output
+        last_stats = self._last_stats
+        used = int(getattr(last_stats, "prompt_tokens", 0) or 0)
+        self.footer.set_context(
+            f"{self._fmt_k(used)} / {self._fmt_k(self._context_window_tokens)}"
+        )
+
+    def _write_crash_report(self, error: Exception) -> None:
+        """Persist an unhandled Textual exception for local diagnosis."""
+        try:
+            log_path = config_mod.CONFIG_DIR / "logs" / "gui-crash.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            report = (
+                f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
+                f"session={self.sess_id}\n"
+                + "".join(
+                    traceback.format_exception(
+                        type(error), error, error.__traceback__
+                    )
+                )
+            )
+            report = re.sub(
+                r"sk-(?:proj-)?[A-Za-z0-9_-]{16,}",
+                "[REDACTED_API_KEY]",
+                report,
+            )
+            if log_path.exists() and log_path.stat().st_size > 1_000_000:
+                previous = log_path.read_text(encoding="utf-8", errors="replace")
+                log_path.write_text(previous[-500_000:], encoding="utf-8")
+            with log_path.open("a", encoding="utf-8") as log:
+                log.write(report)
+        except OSError as log_error:
+            sys.__stderr__.write(f"Could not write Capture Help crash log: {log_error}\n")
+
+    def _handle_exception(self, error: Exception) -> None:
+        """Log an unhandled UI error and preserve the interactive session."""
+        self._write_crash_report(error)
+        self._save_session()
+        try:
+            self.notify(
+                "Unexpected UI error; the chat is still open. "
+                "See ~/.config/capture-help/logs/gui-crash.log.",
+                severity="error",
+                timeout=10,
+            )
+        except Exception as notification_error:  # noqa: BLE001
+            sys.__stderr__.write(
+                f"Capture Help UI error: {error}\n"
+                f"Could not show error notification: {notification_error}\n"
+            )
 
     def _on_stats(self, stats) -> None:
         self._last_stats = stats
         self.footer.set_stats(stats)
         if getattr(stats, "prompt_tokens", 0):
             self.footer.set_context(
-                f"{self._fmt_k(stats.prompt_tokens)} / {self._fmt_k(CONTEXT_WINDOW_TOKENS)}"
+                f"{self._fmt_k(stats.prompt_tokens)} / "
+                f"{self._fmt_k(self._context_window_tokens)}"
             )
         if getattr(stats, "cache_hit_tokens", 0):
             self._log_debug(f"[dim]cache hit[/dim] {stats.cache_hit_tokens} tokens")
@@ -698,13 +937,16 @@ class CaptureHelpApp(App[None]):
         return f"{value:.1f}k"
 
     def _on_turn_done(self, reply: str) -> None:
+        self._finalize_streaming_message()
         self._stop_thinking()
         if self._current_message is not None:
             self._current_message = None
         self._ui_text = ""
+        self._pending_ui_chunks.clear()
         self.history.append({"role": "assistant", "content": reply})
         self._save_session()
         self._maybe_generate_title()
+        self.call_after_refresh(self._trim_chat_widgets)
 
     # -- AI conversation titles -- #
     def _maybe_generate_title(self) -> None:
@@ -819,9 +1061,11 @@ class CaptureHelpApp(App[None]):
         self._flush_provider_log()
 
     def _on_error(self, msg: str) -> None:
+        self._finalize_streaming_message()
         self._stop_thinking()
         self._current_message = None
         self._ui_text = ""
+        self._pending_ui_chunks.clear()
         self.footer.set_state("error")
         self.add_message("error", msg)
         self._log_debug(f"[red]Error:[/red] {msg}")
@@ -834,40 +1078,55 @@ class CaptureHelpApp(App[None]):
     def _save_session_threadsafe(self) -> None:
         self.call_from_thread(self._save_session)
 
-    def _prune_history_threadsafe(self) -> List[Dict[str, str]]:
-        return self.call_from_thread(self._prune_history)
+    def _prune_history_threadsafe(self, token_budget: int) -> List[Dict[str, object]]:
+        return self.call_from_thread(
+            lambda: self._prune_messages(self.history, token_budget=token_budget)
+        )
 
     # ------------------------------------------------------------------ #
     # Input handling
     # ------------------------------------------------------------------ #
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id != "prompt-input":
+    def _submit_prompt(self, value: str) -> None:
+        inp = self.query_one("#prompt-input", ChatInput)
+        if inp.id != "prompt-input":
             return
         popup = self._popup()
         if popup is not None and popup.is_visible():
             cmd = popup.selected()
             if cmd:
-                event.input.value = cmd + " "
-                event.input.cursor_position = len(event.input.value)
+                inp.value = cmd + " "
+                inp.cursor_position = len(inp.value)
                 popup.hide()
-                event.input.focus()
+                inp.focus()
                 return
-        text = event.value.strip()
-        event.input.value = ""
-        popup.hide()
-        if not text:
+        text = value.strip()
+        if self._gen_worker is not None and self._gen_worker.is_running:
+            self.notify(
+                "Still generating — wait for the current reply to finish.",
+                severity="warning",
+            )
             return
+        if not text and not self._pending_images:
+            return
+        inp.value = ""
+        if popup is not None:
+            popup.hide()
+        images = list(self._pending_images)
+        self._pending_images.clear()
+        self._update_pending_images()
+        if not text and images:
+            text = "Please analyze the attached image."
         if text.startswith("/") or text.lower() in ("help", "exit", "quit", "clear"):
             status = self._handle_slash(text)
             if status is not None:
                 return
-        self._send(text)
+        self._send(text, image_paths=images)
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Keep the slash popup in sync as the user types."""
-        if event.input.id != "prompt-input":
+        if event.text_area.id != "prompt-input":
             return
-        value = event.value
+        value = event.text_area.text
         popup = self._popup()
         if popup is None:
             return
@@ -897,15 +1156,16 @@ class CaptureHelpApp(App[None]):
             return
         messages = data.get("messages") or []
         self.history = [dict(m) for m in messages]
+        self._pending_images.clear()
+        self._update_pending_images()
         self.sess_id = sid
         self._ai_title = data.get("title") or None
         # the loaded title is final — don't regenerate a new one
         self._title_requested = True
         chat = self.query_one("#chat", ScrollableContainer)
         chat.remove_children()
-        for m in self.history:
-            if m.get("role") in ("user", "assistant"):
-                self.add_message(m["role"], m.get("content", ""))
+        self._hidden_chat_messages = 0
+        self._render_history_messages(self.history)
         self._enter_chat()
         self._populate_sidebar()
         self._save_session()  # bump it to the top of the list
@@ -918,25 +1178,249 @@ class CaptureHelpApp(App[None]):
         except Exception:  # noqa: BLE001
             return None
 
-    def _send(self, text: str) -> None:
+    def _send(self, text: str, image_paths: Optional[List[str]] = None) -> None:
         if self._gen_worker is not None and self._gen_worker.is_running:
             self.notify("Still generating — wait for the current reply to finish.", severity="warning")
             return
+        self._remember_correction(text)
         self._enter_chat()
-        self.history.append({"role": "user", "content": text})
+        message = {"role": "user", "content": text}
+        if image_paths:
+            message["image_paths"] = image_paths
+            text = f"{text}\n\n[Attached image(s): {', '.join(Path(path).name for path in image_paths)}]"
+            message["content"] = text
+        self.history.append(message)
         self.add_message("user", text)
         self._save_session()
         self._current_message = None
         self._ui_text = ""
         self._start_thinking()
-        self._gen_worker = self._generate(self._prune_history(), self._build_system_prompt())
+        self._gen_worker = self._generate(
+            [dict(message) for message in self.history],
+            self._build_system_prompt(),
+        )
+
+    def _validate_image_path(self, value: str) -> str:
+        path = Path(value).expanduser().resolve()
+        if not path.is_file():
+            raise ValueError(f"Image file not found: {path}")
+        if path.stat().st_size > MAX_IMAGE_BYTES:
+            raise ValueError("Images must be 10 MiB or smaller.")
+        with path.open("rb") as image_file:
+            header = image_file.read(12)
+        if not self._image_mime_type(header):
+            raise ValueError("Choose a valid PNG, JPEG, GIF, or WebP image.")
+        return str(path)
+
+    @staticmethod
+    def _image_mime_type(header: bytes) -> Optional[str]:
+        if header.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if header.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if header.startswith((b"GIF87a", b"GIF89a")):
+            return "image/gif"
+        if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+            return "image/webp"
+        return None
+
+    def _read_clipboard_image(self) -> Optional[tuple[bytes, str]]:
+        supported_types = ("image/png", "image/jpeg", "image/webp", "image/gif")
+        if shutil.which("wl-paste"):
+            try:
+                clipboard_types = subprocess.run(
+                    ["wl-paste", "--list-types"],
+                    check=True,
+                    capture_output=True,
+                    timeout=1.5,
+                    text=True,
+                ).stdout.splitlines()
+                for mime_type in supported_types:
+                    if mime_type in clipboard_types:
+                        image = subprocess.run(
+                            ["wl-paste", "--type", mime_type, "--no-newline"],
+                            check=True,
+                            capture_output=True,
+                            timeout=2.0,
+                        ).stdout
+                        return image, mime_type
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+        if shutil.which("xclip"):
+            try:
+                clipboard_types = subprocess.run(
+                    ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"],
+                    check=True,
+                    capture_output=True,
+                    timeout=1.5,
+                    text=True,
+                ).stdout.splitlines()
+                for mime_type in supported_types:
+                    if mime_type in clipboard_types:
+                        image = subprocess.run(
+                            ["xclip", "-selection", "clipboard", "-t", mime_type, "-o"],
+                            check=True,
+                            capture_output=True,
+                            timeout=2.0,
+                        ).stdout
+                        return image, mime_type
+            except (OSError, subprocess.SubprocessError):
+                pass
+        return None
+
+    def _paste_clipboard_image(self) -> bool:
+        clipboard_image = self._read_clipboard_image()
+        if clipboard_image is None:
+            return False
+        image_bytes, mime_type = clipboard_image
+        actual_mime_type = self._image_mime_type(image_bytes[:12])
+        if not image_bytes or actual_mime_type != mime_type:
+            self.notify("The clipboard image has an unsupported or invalid format.", severity="error")
+            return True
+        self._attach_image_bytes(image_bytes, actual_mime_type)
+        return True
+
+    def _attach_image_bytes(self, image_bytes: bytes, mime_type: str) -> None:
+        actual_mime_type = self._image_mime_type(image_bytes[:12])
+        if not actual_mime_type or actual_mime_type != mime_type:
+            self.notify("Choose a valid PNG, JPEG, GIF, or WebP image.", severity="error")
+            return
+        if len(image_bytes) > MAX_IMAGE_BYTES:
+            self.notify("Images must be 10 MiB or smaller.", severity="error")
+            return
+        if len(self._pending_images) >= MAX_IMAGES_PER_MESSAGE:
+            self.notify(
+                f"Attach up to {MAX_IMAGES_PER_MESSAGE} images per message.",
+                severity="warning",
+            )
+            return
+        extension = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+        }[mime_type]
+        attachment_dir = config_mod.CONFIG_DIR / "history" / "attachments"
+        image_path = attachment_dir / f"{uuid.uuid4().hex}{extension}"
+        try:
+            attachment_dir.mkdir(parents=True, exist_ok=True)
+            image_path.write_bytes(image_bytes)
+        except OSError as error:
+            self.notify(f"Could not save clipboard image: {error}", severity="error")
+            return
+        self._pending_images.append(str(image_path))
+        self._update_pending_images()
+        self.notify("Image pasted")
+
+    def _encode_image_messages(self, messages: List[Dict[str, object]]) -> List[dict]:
+        encoded = []
+        total_image_bytes = 0
+        for message in messages:
+            image_paths = message.get("image_paths") or []
+            if not image_paths:
+                encoded.append(dict(message))
+                continue
+            if not isinstance(image_paths, list) or not all(
+                isinstance(image_path, str) for image_path in image_paths
+            ):
+                raise ProviderError("Saved image attachment references are invalid.")
+            parts = [{"type": "text", "text": str(message.get("content", ""))}]
+            for image_path in image_paths:
+                path = Path(image_path)
+                try:
+                    if path.stat().st_size > MAX_IMAGE_BYTES:
+                        raise ProviderError(
+                            f"Attached image exceeds 10 MiB: {path}"
+                        )
+                    image_bytes = path.read_bytes()
+                except OSError as error:
+                    raise ProviderError(
+                        f"Attached image is no longer available: {path}"
+                    ) from error
+                total_image_bytes += len(image_bytes)
+                if total_image_bytes > MAX_TOTAL_IMAGE_BYTES:
+                    raise ProviderError(
+                        "Attached images exceed the 30 MiB total request limit. "
+                        "Start a new chat or remove older image turns."
+                    )
+                mime_type = self._image_mime_type(image_bytes[:12])
+                if not mime_type or len(image_bytes) > MAX_IMAGE_BYTES:
+                    raise ProviderError(
+                        f"Attached image is invalid or exceeds 10 MiB: {path}"
+                    )
+                data_url = (
+                    f"data:{mime_type};base64,"
+                    f"{base64.b64encode(image_bytes).decode('ascii')}"
+                )
+                parts.append(
+                    {"type": "image_url", "image_url": {"url": data_url}}
+                )
+            encoded.append({"role": message["role"], "content": parts})
+        return encoded
+
+    def _on_image_path(self, value: Optional[str]) -> None:
+        if not value:
+            return
+        try:
+            path = self._validate_image_path(value)
+        except (OSError, ValueError) as error:
+            self.notify(str(error), severity="error")
+            return
+        if path in self._pending_images:
+            self.notify("That image is already attached.")
+            return
+        if len(self._pending_images) >= MAX_IMAGES_PER_MESSAGE:
+            self.notify(
+                f"Attach up to {MAX_IMAGES_PER_MESSAGE} images per message.",
+                severity="warning",
+            )
+            return
+        self._pending_images.append(path)
+        self._update_pending_images()
+        self.notify(f"Attached {Path(path).name}")
+
+    def action_clear_pending_images(self) -> None:
+        self._pending_images.clear()
+        self._update_pending_images()
+
+    def _update_pending_images(self) -> None:
+        label = self.query_one("#pending-images", Label)
+        clear_button = self.query_one("#clear-images", Button)
+        label.update(", ".join(Path(path).name for path in self._pending_images))
+        clear_button.disabled = not self._pending_images
+
+    def _remember_correction(self, text: str) -> None:
+        """Learn only unmistakable user corrections, not ordinary chat content."""
+        if not re.match(
+            r"^\s*(?:no[,.!:]\s|i meant\b|i said\b|correction\s*:|"
+            r"that(?:'s| is) (?:wrong|incorrect)\b|"
+            r"you misunderstood\b|the correct (?:answer|version|way)\b)",
+            text,
+            re.IGNORECASE,
+        ):
+            return
+        learned = add_memory("auto_correction", f"User correction: {text}")
+        if learned:
+            self._cached_system_prompt = get_cached_system_prompt(
+                self.project.get("name", "project"),
+                self.project.get("languages", []),
+            )
+            self._populate_sidebar()
+            self.notify("Saved your correction to local memory.")
 
     # ------------------------------------------------------------------ #
     # Landing screen interactions
     # ------------------------------------------------------------------ #
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
-        if button_id == "sidebar-new-chat":
+        if button_id == "attach-image":
+            self.push_screen(ImagePathScreen(), self._on_image_path)
+        elif button_id == "clear-images":
+            self.action_clear_pending_images()
+        elif button_id == "send-prompt":
+            self._submit_prompt(self.query_one("#prompt-input", ChatInput).text)
+        elif button_id == "sidebar-new-chat":
             self.action_new_chat()
         elif button_id == "sidebar-search":
             self.action_search()
@@ -1004,6 +1488,8 @@ class CaptureHelpApp(App[None]):
 
         if sub in ("/clear", "clear"):
             self.history = []
+            self._pending_images.clear()
+            self._update_pending_images()
             self.sess_id = str(uuid.uuid4())[:8]
             self._ai_title = None
             self._title_requested = False
@@ -1219,7 +1705,7 @@ class CaptureHelpApp(App[None]):
                 title=self._ai_title or "",
                 open_files=list(self._open_files),
                 prompt_tokens=prompt_tokens,
-                window_tokens=CONTEXT_WINDOW_TOKENS,
+                window_tokens=self._context_window_tokens,
                 history_chars=hist_chars,
             )
         )
@@ -1236,6 +1722,8 @@ class CaptureHelpApp(App[None]):
 
     def action_clear_chat(self) -> None:
         self.history = []
+        self._pending_images.clear()
+        self._update_pending_images()
         self.query_one("#chat", ScrollableContainer).remove_children()
         self._show_home()
         self.footer.set_stats(None)
@@ -1244,6 +1732,8 @@ class CaptureHelpApp(App[None]):
     def action_new_chat(self) -> None:
         self._save_session()
         self.history = []
+        self._pending_images.clear()
+        self._update_pending_images()
         self.sess_id = str(uuid.uuid4())[:8]
         self._ai_title = None
         self._title_requested = False

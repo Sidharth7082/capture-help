@@ -108,6 +108,25 @@ class SearchModal(BaseModal):
         self.dismiss(event.value.strip())
 
 
+class ImagePathScreen(BaseModal):
+    """Ask for a local image path to attach to the next prompt."""
+
+    def __init__(self, **kwargs):
+        super().__init__("Attach Image", **kwargs)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modal-card"):
+            yield Label("Attach a local image", classes="modal-title")
+            yield Input(placeholder="/path/to/image.png", id="image-path-input")
+            yield Label(
+                "PNG, JPEG, GIF, or WebP · sent to your selected AI provider",
+                classes="modal-hint",
+            )
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value.strip())
+
+
 class ContextViewerScreen(BaseModal):
     """What the model currently has in context: session, open files, usage."""
 

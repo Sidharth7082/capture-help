@@ -74,6 +74,33 @@ def test_deepseek_provider_raises_on_error(monkeypatch):
             pass
 
 
+def test_deepseek_provider_reads_advertised_context_limits():
+    from types import SimpleNamespace
+
+    p = deepseek.DeepSeekProvider(api_key="sk-test-key-123456", model="deepseek-chat")
+
+    class FakeClient:
+        def with_options(self, **kwargs):
+            assert kwargs == {"timeout": 5.0}
+            return self
+
+        class models:
+            @staticmethod
+            def list():
+                return SimpleNamespace(
+                    data=[
+                        SimpleNamespace(
+                            id="deepseek-chat",
+                            context_window=128_000,
+                            max_output_tokens=16_000,
+                        )
+                    ]
+                )
+
+    p.client = FakeClient()
+    assert p.get_context_limits() == (128_000, 16_000)
+
+
 def test_save_config_keep_key_preserves_existing_key(tmp_path, monkeypatch):
     """The local-fallback path must never wipe the configured DeepSeek API key."""
     from capture_help import config as config_mod

@@ -9,7 +9,7 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container, Grid, Horizontal, Vertical
-from textual.widgets import Button, Collapsible, Input, Label, OptionList, RichLog, Static
+from textual.widgets import Button, Collapsible, Input, Label, OptionList, RichLog, Static, TextArea
 from textual.widgets.option_list import Option
 from textual.widgets._markdown import Markdown, MarkdownFence
 from textual.content import Content
@@ -484,7 +484,7 @@ class CodeFence(MarkdownFence):
         """Place the fence's code into the prompt input so the user can
         edit or extend it before sending."""
         try:
-            inp = self.app.query_one("#prompt-input", Input)
+            inp = self.app.query_one("#prompt-input", ChatInput)
         except Exception:  # noqa: BLE001
             return
         code = (self.code or "").rstrip()
@@ -530,6 +530,7 @@ class ChatMessage(Container):
         self.sublabel = sublabel
         self.markdown: Markdown | None = None
         self.role_label: Label | None = None
+        self.stream_preview: Static | None = None
 
     def compose(self) -> ComposeResult:
         avatar = ROLE_AVATARS.get(self.role, "·")
@@ -539,8 +540,12 @@ class ChatMessage(Container):
         yield self.role_label
         with Container(classes="bubble"):
             if self.role in ("user", "assistant"):
-                self.markdown = CodeMarkdown(self.content or "")
-                yield self.markdown
+                if self.role == "assistant" and self.streaming:
+                    self.stream_preview = Static(self.content or "", classes="stream-preview")
+                    yield self.stream_preview
+                else:
+                    self.markdown = CodeMarkdown(self.content or "")
+                    yield self.markdown
             else:
                 icon = ROLE_ICONS.get(self.role, "·")
                 text = f"{icon} {self.content}" if self.content else icon
@@ -552,6 +557,20 @@ class ChatMessage(Container):
     def update_markdown(self, text: str) -> None:
         if self.markdown is not None:
             self.markdown.update(text)
+
+    def update_stream_preview(self, text: str) -> None:
+        if self.stream_preview is not None:
+            self.stream_preview.update(text)
+
+    def finalize_stream(self, text: str) -> None:
+        if self.stream_preview is None:
+            self.update_markdown(text)
+            return
+        preview = self.stream_preview
+        self.stream_preview = None
+        preview.remove()
+        self.markdown = CodeMarkdown(text)
+        self.query_one(".bubble").mount(self.markdown)
 
 
 class ThinkingRow(Container):
@@ -1010,13 +1029,48 @@ class SlashPopup(Vertical):
         return getattr(opt, "id", None)
 
 
-class ChatInput(Input):
-    """Prompt input that keeps the slash popup in sync while typing.
+class ChatInput(TextArea):
+    """Multiline prompt editor with slash suggestions and an explicit send key.
 
     Arrow keys move the popup highlight and Escape/Tab dismiss or fill it, but
-    focus stays in the input so the user can keep typing to narrow the list.
-    ``Enter`` is left to ``Input.Submitted`` and handled by the app.
+    focus stays in the editor so the user can keep typing to narrow the list.
+    Enter inserts a newline; Ctrl+Enter submits the prompt.
     """
+
+    BINDINGS = [("ctrl+enter", "send_prompt", "Send")]
+
+    @property
+    def value(self) -> str:
+        """Keep the former Input API for existing app flows and integrations."""
+        return self.text
+
+    @value.setter
+    def value(self, value: str) -> None:
+        self.load_text(value)
+        lines = value.split("\n")
+        self.cursor_location = (len(lines) - 1, len(lines[-1]))
+
+    @property
+    def cursor_position(self) -> int:
+        line, column = self.cursor_location
+        return sum(len(part) + 1 for part in self.text.split("\n")[:line]) + column
+
+    @cursor_position.setter
+    def cursor_position(self, position: int) -> None:
+        before_cursor = self.text[:max(0, position)]
+        line = before_cursor.count("\n")
+        column = len(before_cursor.rsplit("\n", 1)[-1])
+        self.cursor_location = (line, column)
+
+    def action_send_prompt(self) -> None:
+        self.app._submit_prompt(self.text)
+
+    def action_paste(self) -> None:
+        if self.read_only:
+            return
+        if self.app._paste_clipboard_image():
+            return
+        super().action_paste()
 
     def _popup(self) -> SlashPopup | None:
         try:

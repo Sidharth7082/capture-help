@@ -312,6 +312,11 @@ Screen {
     background: transparent;
 }
 
+.stream-preview {
+    background: transparent;
+    color: #e8edf4;
+}
+
 /* Tool execution card */
 .role-tool {
     align-horizontal: left;
@@ -489,24 +494,69 @@ Screen {
 }
 
 #prompt-input {
-    width: 92%;
+    width: 90%;
     max-width: 104;
-    background: #171a1f;
-    border: round #292e35;
+    background: #11151b;
+    border: round #2a303a;
     color: #e8edf4;
-    padding: 0 2 0 2;
-    height: 3;
+    padding: 0 1 0 1;
+    height: 4;
+    min-height: 3;
+    max-height: 8;
 }
 
 #prompt-input:focus {
     border: round #3a7d92;
 }
 
+#composer-actions {
+    width: 90%;
+    max-width: 104;
+    height: 2;
+    align-vertical: middle;
+}
+
+#composer-actions Button {
+    height: 2;
+    min-width: 9;
+    margin: 0 1 0 0;
+    border: round #292e35;
+    background: #171a1f;
+    color: #aab4c2;
+}
+
+#composer-actions Button:hover,
+#composer-actions Button:focus {
+    border: round #3a7d92;
+    color: #e8edf4;
+}
+
+#composer-actions #send-prompt {
+    min-width: 14;
+    background: #1d3440;
+    color: #8fe1f2;
+}
+
+#composer-actions #clear-images {
+    min-width: 3;
+    width: 3;
+    padding: 0;
+    margin: 0 1 0 0;
+}
+
+#pending-images {
+    width: 1fr;
+    height: 1;
+    color: #8f9aa9;
+    padding: 0 2;
+    overflow: hidden;
+}
+
 #prompt-hints {
-    width: 92%;
+    width: 90%;
     max-width: 104;
     color: #5d6878;
-    padding: 0 1 0 1;
+    padding: 0 1 1 1;
 }
 
 /* ---------- Slash-command popup ---------- */

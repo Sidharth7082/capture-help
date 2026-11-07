@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -77,6 +78,122 @@ def test_streaming_updates_history_and_footer():
             assert app.footer.tokens_label is not None
 
     asyncio.run(scenario())
+
+
+def test_multiline_composer_sends_only_with_ctrl_enter():
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            app._get_provider = lambda notify_fallback=True: FakeProvider()
+            inp = app.query_one("#prompt-input")
+            inp.focus()
+            inp.value = "first line"
+            await pilot.press("enter")
+            await pilot.press(*"second line")
+            assert inp.value == "first line\nsecond line"
+            await pilot.press("ctrl+enter")
+            for _ in range(100):
+                if app._gen_worker is not None and app._gen_worker.is_finished:
+                    break
+                await pilot.pause(0.05)
+            assert app.history[0]["content"] == "first line\nsecond line"
+
+    asyncio.run(scenario())
+
+
+def test_image_attachment_modal_and_vision_payload(tmp_path):
+    async def scenario():
+        app = CaptureHelpApp()
+        image_path = tmp_path / "sample.png"
+        image_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8)
+
+        class CapturingProvider(FakeProvider):
+            def stream_completion(self, messages, system_prompt=None, temperature=0.7):
+                self.messages = messages
+                yield from super().stream_completion(messages, system_prompt, temperature)
+
+        provider = CapturingProvider()
+        async with app.run_test() as pilot:
+            app._get_provider = lambda notify_fallback=True: provider
+            app._maybe_generate_title = lambda: None
+            await pilot.click("#attach-image")
+            path_input = app.screen.query_one("#image-path-input")
+            path_input.value = str(image_path)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app._pending_images == [str(image_path)]
+            assert "sample.png" in str(app.query_one("#pending-images").render())
+
+            await pilot.click("#prompt-input")
+            app._submit_prompt("Describe this")
+            for _ in range(100):
+                if app._gen_worker is not None and app._gen_worker.is_finished:
+                    break
+                await pilot.pause(0.05)
+
+            parts = provider.messages[-1]["content"]
+            assert parts[0]["type"] == "text"
+            assert "Describe this" in parts[0]["text"]
+            assert parts[1]["type"] == "image_url"
+            assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+    asyncio.run(scenario())
+
+
+def test_ctrl_v_pastes_clipboard_image_and_keeps_text_fallback(tmp_path, monkeypatch):
+    from capture_help.gui import app as gui_app
+
+    monkeypatch.setattr(gui_app.config_mod, "CONFIG_DIR", tmp_path / "config")
+    image = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            inp = app.query_one("#prompt-input")
+            app._read_clipboard_image = lambda: (image, "image/png")
+            inp.action_paste()
+            await pilot.pause()
+            assert len(app._pending_images) == 1
+            pasted_image = app._pending_images[0]
+            assert pasted_image.endswith(".png")
+            assert Path(pasted_image).read_bytes() == image
+
+            app.action_clear_pending_images()
+            app._read_clipboard_image = lambda: None
+            app._clipboard = "ordinary text"
+            inp.action_paste()
+            assert inp.text == "ordinary text"
+
+    asyncio.run(scenario())
+
+
+def test_clipboard_image_reader_uses_wl_paste_mime_type(monkeypatch):
+    from capture_help.gui import app as gui_app
+
+    image = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        if "--list-types" in command:
+            return SimpleNamespace(stdout="text/plain\nimage/png\n")
+        return SimpleNamespace(stdout=image)
+
+    monkeypatch.setattr(
+        gui_app.shutil,
+        "which",
+        lambda command: "/usr/bin/wl-paste" if command == "wl-paste" else None,
+    )
+    monkeypatch.setattr(gui_app.subprocess, "run", fake_run)
+
+    clipboard_image = CaptureHelpApp()._read_clipboard_image()
+    assert clipboard_image == (image, "image/png")
+    assert commands[-1] == [
+        "wl-paste",
+        "--type",
+        "image/png",
+        "--no-newline",
+    ]
 
 
 def test_slash_help_and_debug_toggle():
@@ -911,12 +1028,12 @@ def test_live_context_usage_in_footer():
                 duration_seconds=1.0, prompt_tokens=2300, completion_tokens=120,
                 total_tokens=2420, cost_usd=0.0, model="m"))
             await pilot.pause()
-            assert "2.3k / 32k" in str(app.footer.context_label.render())
+            assert "2.3k / 64k" in str(app.footer.context_label.render())
             app._on_stats(TokenUsageStats(
                 duration_seconds=1.0, prompt_tokens=320, completion_tokens=5,
                 total_tokens=325, cost_usd=0.0, model="m"))
             await pilot.pause()
-            assert "320 / 32k" in str(app.footer.context_label.render())
+            assert "320 / 64k" in str(app.footer.context_label.render())
 
     asyncio.run(scenario())
 
@@ -1083,6 +1200,164 @@ def test_project_memory_panel_shows_learned_rules():
     asyncio.run(scenario())
 
 
+def test_context_pruning_uses_token_budget_and_keeps_recent_prompt():
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            messages = [
+                {"role": "user", "content": "old context " * 100},
+                {"role": "assistant", "content": "old answer " * 100},
+                {"role": "user", "content": "latest question"},
+            ]
+            pruned = app._prune_messages(messages, token_budget=20)
+            assert pruned[-1]["content"] == "latest question"
+            assert len(pruned) == 1
+
+            truncated = app._prune_messages(
+                [{"role": "user", "content": "context " * 100}],
+                token_budget=30,
+            )
+            assert len(truncated) == 1
+            assert "Earlier content truncated" in truncated[0]["content"]
+
+    asyncio.run(scenario())
+
+
+def test_clear_user_corrections_are_learned_locally_and_sanitized():
+    from capture_help.memory import get_all_memories
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._remember_correction(
+                "No, use Python 3.12 and don't include sk-123456789012345678901234"
+            )
+            app._remember_correction(
+                "No, use Python 3.12 and don't include sk-123456789012345678901234"
+            )
+            app._remember_correction("Could you explain Python 3.12?")
+            await pilot.pause()
+
+            memories = get_all_memories()
+            corrections = [
+                memory for memory in memories if memory["category"] == "auto_correction"
+            ]
+            assert len(corrections) == 1
+            assert "Python 3.12" in corrections[0]["content"]
+            assert "sk-123456789012345678901234" not in corrections[0]["content"]
+            assert "[REDACTED_API_KEY]" in corrections[0]["content"]
+            assert "Python 3.12" in app._cached_system_prompt
+
+    asyncio.run(scenario())
+
+
+def test_automatic_corrections_are_bounded():
+    from capture_help.memory import MAX_AUTO_CORRECTIONS, add_memory, get_all_memories
+
+    for index in range(MAX_AUTO_CORRECTIONS + 5):
+        assert add_memory("auto_correction", f"Correction {index}")
+
+    corrections = [
+        memory
+        for memory in get_all_memories()
+        if memory["category"] == "auto_correction"
+    ]
+    assert len(corrections) == MAX_AUTO_CORRECTIONS
+    assert corrections[0]["content"] == f"Correction {MAX_AUTO_CORRECTIONS + 4}"
+
+
+def test_streaming_batches_markdown_updates_until_flush():
+    import time
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            message = app.add_message("assistant", "", streaming=True)
+            await pilot.pause()
+            app._current_message = message
+            app._last_stream_render = time.monotonic()
+            app._on_token("Hello ")
+            app._on_token("world")
+            await pilot.pause()
+            assert app._ui_text == ""
+            assert app._pending_ui_chunks == ["Hello ", "world"]
+
+            app._flush_streaming_text()
+            assert app._ui_text == "Hello world"
+            assert not app._pending_ui_chunks
+            assert message.stream_preview is not None
+            assert "Hello world" in str(message.stream_preview.render())
+            message.finalize_stream(app._ui_text)
+            await pilot.pause()
+            assert "Hello world" in message.markdown.source
+
+    asyncio.run(scenario())
+
+
+def test_first_stream_chunk_renders_after_assistant_mount():
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._on_token("first chunk")
+            await pilot.pause(0.1)
+            message = app.query_one(".role-assistant")
+            assert "first chunk" in str(message.stream_preview.render())
+            app._on_turn_done("first chunk")
+            await pilot.pause()
+            assert message.markdown.source == "first chunk"
+
+    asyncio.run(scenario())
+
+
+def test_loaded_history_renders_only_recent_messages():
+    from capture_help.gui.app import MAX_RENDERED_CHAT_MESSAGES
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.history = [
+                {"role": "user", "content": f"message {index}"}
+                for index in range(MAX_RENDERED_CHAT_MESSAGES + 10)
+            ]
+            app._render_history_messages(app.history)
+            await pilot.pause()
+
+            rendered = list(app.query(".chat-message"))
+            assert len(rendered) == MAX_RENDERED_CHAT_MESSAGES
+            assert app._hidden_chat_messages == 10
+            assert "10 older messages" in str(
+                app.query_one("#history-trim-notice").render()
+            )
+            assert len(app.history) == MAX_RENDERED_CHAT_MESSAGES + 10
+
+    asyncio.run(scenario())
+
+
+def test_crash_report_is_saved_with_credentials_redacted():
+    from capture_help import config
+
+    async def scenario():
+        app = CaptureHelpApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._handle_exception(
+                RuntimeError("failed request using sk-123456789012345678901234")
+            )
+            await pilot.pause()
+            report = (config.CONFIG_DIR / "logs" / "gui-crash.log").read_text()
+            assert "RuntimeError: failed request" in report
+            assert "sk-123456789012345678901234" not in report
+            assert "[REDACTED_API_KEY]" in report
+            assert app.is_running
+
+    asyncio.run(scenario())
+
+
 def test_context_viewer_shows_files_and_usage():
     from textual.widgets import Static
 
@@ -1105,7 +1380,7 @@ def test_context_viewer_shows_files_and_usage():
             modal = app.screen
             text = " ".join(str(w.render()) for w in modal.query(Static))
             assert "Renderer.cpp" in text and "Workspace.qml" in text
-            assert "2,300 / 32,000" in text
+            assert "2,300 / 64,000" in text
             modal.dismiss(None)
             await pilot.pause()
 

@@ -37,7 +37,7 @@ def get_cached_system_prompt(project_name: str, languages: list) -> str:
     username = getpass.getuser()
     system_os = platform.system() + " " + platform.release()
 
-    memories = get_all_memories()
+    memories = get_all_memories(limit=20)
     mem_text = ""
     if memories:
         mem_text = "\nLearned Background Memory Rules:\n" + "\n".join([f"- {m['content']}" for m in memories])
